@@ -1,0 +1,8 @@
+order_id,region,product,units,unit_price,order_date
+1,north,K2,4,18500,2026-01-14
+2,south,K2,2,18500,2026-01-20
+3,north,K1,6,12000,2026-02-03
+4,west,K2,5,18500,2026-02-11
+5,south,K1,3,12000,2026-03-02
+6,west,K2,1,18500,2026-03-15
+7,north,K2,2,18500,2026-03-28

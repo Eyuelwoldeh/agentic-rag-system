@@ -1,0 +1,9 @@
+[
+  {"q": "How many PTO days can I carry over, and when do extra days expire?", "expect": ["5", "January 31"]},
+  {"q": "What's the hotel cap for a trip to London?", "expect": ["350"]},
+  {"q": "What is the payload of the Kestrel K2 and how much more is that than the K1?", "expect": ["7.5", "2.5"]},
+  {"q": "Which region had the highest total revenue from orders?", "expect": ["north"]},
+  {"q": "What was total K2 revenue across all orders?", "expect": ["259,000", "259000"], "any": true},
+  {"q": "If a new hire spends their full laptop budget and home-office stipend, what is the total?", "expect": ["3,000", "3000"], "any": true},
+  {"q": "What is the company's policy on pets in the office?", "expect": ["not", "doesn't", "no information", "does not"], "any": true}
+]
