@@ -1,18 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import Chart, { type ChartData } from "@/components/Chart";
 import { api, apiJson, streamChat, type AgentEvent, type Source } from "@/lib/api";
 import { useMe } from "@/lib/me";
 
 type ChartEvent = ChartData & { id: string; source: string; sql: string };
-type Step = Exclude<AgentEvent, { type: "text" | "sources" | "done" | "chart" }>;
+type Step = Exclude<AgentEvent, { type: "text" | "sources" | "done" | "chart" | "restart" }>;
 type Done = Extract<AgentEvent, { type: "done" }>;
 type Assistant = { role: "assistant"; content: string; steps: Step[]; sources: Source[]; charts: ChartEvent[]; done?: Done; pending: boolean };
 type Msg = { role: "user"; content: string } | Assistant;
-type Home = { checklist: { id: string; label: string; done: boolean }[]; suggestions: string[] };
-type Library = { documents: { id: number; name: string; chunks: number; mine: boolean; private: boolean }[]; tables: Record<string, Record<string, string>> };
+type Home = { checklist: { id: string; label: string; done: boolean }[]; suggestions: string[]; ai: string[] };
+type Sheet = { name: string; title: string; source: string; private: boolean; mine: boolean; columns: Record<string, string> };
+type Library = { documents: { id: number; name: string; chunks: number; mine: boolean; private: boolean }[]; tables: Sheet[] };
 
 export default function Chat() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -37,7 +39,7 @@ export default function Chat() {
     });
   }
 
-  async function ask(question: string) {
+  async function ask(question: string, analyze?: string) {
     question = question.trim();
     if (!question || busy) return;
     const history = msgs.filter((m) => m.content).map((m) => ({ role: m.role, content: m.content })).slice(-20);
@@ -45,10 +47,11 @@ export default function Chat() {
     setBusy(true);
     setMsgs((p) => [...p, { role: "user", content: question }, { role: "assistant", content: "", steps: [], sources: [], charts: [], pending: true }]);
     try {
-      for await (const ev of streamChat(question, history)) {
+      for await (const ev of streamChat(question, history, analyze)) {
         if (ev.type === "text") patchLast((m) => ({ content: m.content + ev.text }));
         else if (ev.type === "sources") patchLast(() => ({ sources: ev.items }));
         else if (ev.type === "done") patchLast(() => ({ done: ev, content: ev.answer || "", pending: false }));
+        else if (ev.type === "restart") patchLast((m) => ({ content: "", charts: [], steps: [...m.steps, { type: "thinking", text: ev.reason }] }));
         else if (ev.type === "chart") {
           const c = ev.chart;
           patchLast((m) => ({ charts: [...m.charts, { ...c, spec: { type: c.type, x: c.x, y: c.y } }] }));
@@ -72,11 +75,12 @@ export default function Chat() {
 
   return (
     <div className="flex h-[calc(100dvh-3rem)] flex-col md:flex-row">
-      <Sidebar onChange={loadHome} />
+      <Sidebar onChange={loadHome} onAnalyze={(s) => ask(`Analyze “${s.title}” and give me the key business insights.`, s.name)} busy={busy} />
       <main className="flex min-w-0 flex-1 flex-col">
         <div className="flex-1 overflow-y-auto px-4 py-6">
           <div className="mx-auto max-w-3xl space-y-6">
-            {msgs.length === 0 && <Welcome home={home} onAsk={ask} />}
+            {home && home.ai.length === 0 && <NoAIBanner />}
+            {msgs.length === 0 && <Welcome home={home} onAsk={(q) => ask(q)} />}
             {msgs.map((m, i) => (m.role === "user" ? <UserBubble key={i} text={m.content} /> : <AssistantMsg key={i} m={m} />))}
             <div ref={bottom} />
           </div>
@@ -153,6 +157,16 @@ function Welcome({ home, onAsk }: { home: Home | null; onAsk: (q: string) => voi
         </section>
       )}
     </div>
+  );
+}
+
+function NoAIBanner() {
+  const me = useMe()!;
+  return (
+    <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm">
+      <b>No AI model connected.</b> You&apos;ll get search results and calculated spreadsheet insights, but not written answers.{" "}
+      {me.role === "admin" ? <>Add a Claude or ChatGPT key in <Link href="/settings" className="underline">Settings → AI model</Link>.</> : "Ask an admin to connect one."}
+    </p>
   );
 }
 
@@ -260,6 +274,7 @@ const TOOL_LABEL: Record<string, string> = {
   search_documents: "Searching docs",
   web_search: "Searching the web",
   list_data_sources: "Finding data",
+  analyze_spreadsheet: "Analyzing the sheet",
   describe_tables: "Reading table columns",
   run_sql: "Querying data",
   create_chart: "Making a chart",
@@ -316,16 +331,16 @@ function StepView({ s }: { s: Step }) {
 function fmtInput(input: unknown) {
   if (input && typeof input === "object") {
     const o = input as Record<string, unknown>;
-    const text = String(o.query ?? o.title ?? o.command ?? o.code ?? (Array.isArray(o.tables) ? o.tables.join(", ") : "") ?? "").slice(0, 200);
+    const text = String(o.query ?? o.title ?? o.table ?? o.command ?? o.code ?? (Array.isArray(o.tables) ? o.tables.join(", ") : "") ?? "").slice(0, 200);
     return o.source && typeof o.source === "string" && !o.source.startsWith("conn-") && o.source !== "uploads"
       ? `${text} · in ${SOURCE_LABEL[o.source] ?? o.source}` : text;
   }
   return String(input ?? "");
 }
 
-function Sidebar({ onChange }: { onChange: () => void }) {
+function Sidebar({ onChange, onAnalyze, busy }: { onChange: () => void; onAnalyze: (s: Sheet) => void; busy: boolean }) {
   const me = useMe()!;
-  const [lib, setLib] = useState<Library>({ documents: [], tables: {} });
+  const [lib, setLib] = useState<Library>({ documents: [], tables: [] });
   const [status, setStatus] = useState("");
   const [visibility, setVisibility] = useState<"everyone" | "private">("everyone");
 
@@ -345,8 +360,17 @@ function Sidebar({ onChange }: { onChange: () => void }) {
       body.append("visibility", visibility);
       const res = await api("/api/upload", { method: "POST", body });
       const json = await res.json();
-      setStatus(res.ok ? `Added ${file.name}${visibility === "private" ? " (only you)" : ""}` : `${file.name}: ${json.detail}`);
+      const tabs = json.kind === "tables" ? json.tables.length : 0;
+      setStatus(res.ok ? `Added ${file.name}${tabs > 1 ? ` (${tabs} tabs)` : ""}${visibility === "private" ? " · only you" : ""}` : `${file.name}: ${json.detail}`);
     }
+    refresh();
+    onChange();
+  }
+
+  async function removeSheet(s: Sheet) {
+    if (!confirm(`Delete ${s.title}?`)) return;
+    const res = await api(`/api/tables/${s.name}`, { method: "DELETE" });
+    if (!res.ok) setStatus((await res.json()).detail);
     refresh();
     onChange();
   }
@@ -363,8 +387,8 @@ function Sidebar({ onChange }: { onChange: () => void }) {
     <aside className="max-h-64 shrink-0 overflow-y-auto border-b border-line p-4 text-sm md:max-h-none md:w-72 md:border-b-0 md:border-r">
       <label className="block cursor-pointer rounded-lg border border-dashed border-line px-3 py-4 text-center text-muted hover:border-accent hover:text-foreground">
         <span className="block font-medium text-foreground">Add files</span>
-        <span className="text-xs">PDF, Word-exported text, Markdown, or CSV spreadsheets</span>
-        <input type="file" multiple accept=".pdf,.txt,.md,.csv" className="sr-only" onChange={(e) => upload(e.target.files)} />
+        <span className="text-xs">Excel or CSV spreadsheets, PDFs, text and Markdown</span>
+        <input type="file" multiple accept=".xlsx,.xlsm,.csv,.pdf,.txt,.md" className="sr-only" onChange={(e) => upload(e.target.files)} />
       </label>
       <div className="mt-2 flex items-center gap-2 text-xs text-muted">
         <span>Who can see uploads:</span>
@@ -389,12 +413,25 @@ function Sidebar({ onChange }: { onChange: () => void }) {
       </ul>
 
       <h2 className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Spreadsheets</h2>
-      {Object.keys(lib.tables).length === 0 && <p className="text-xs text-muted">Upload a CSV to ask questions about numbers and get charts.</p>}
-      <ul className="space-y-2">
-        {Object.entries(lib.tables).map(([t, cols]) => (
-          <li key={t}>
-            <span className="font-mono">{t}</span>
-            <p className="truncate text-xs text-muted" title={Object.keys(cols).join(", ")}>{Object.keys(cols).join(", ")}</p>
+      {lib.tables.length === 0 && <p className="text-xs text-muted">Add an Excel or CSV file, then click Analyze for insights and charts.</p>}
+      <ul className="space-y-2.5">
+        {lib.tables.map((s) => (
+          <li key={s.name} className="group">
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate" title={`${s.title} · table ${s.name}`}>
+                {s.private && <span title="Restricted" className="mr-1">🔒</span>}
+                {s.source === "gdrive" && <span title="From Google Drive" className="mr-1 text-xs text-muted">▲</span>}
+                {s.title.includes(" › ") ? <>{s.title.split(" › ")[1]} <span className="text-xs text-muted">· {s.title.split(" › ")[0]}</span></> : s.title}
+              </span>
+              <button onClick={() => onAnalyze(s)} disabled={busy} className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-40"
+                title="Find trends, top performers, dips and outliers, with charts">
+                Analyze
+              </button>
+              {(s.mine || me.role === "admin") && s.source === "upload" && (
+                <button onClick={() => removeSheet(s)} aria-label={`Delete ${s.title}`} className="shrink-0 text-xs text-muted opacity-0 hover:text-bad group-hover:opacity-100 focus:opacity-100">✕</button>
+              )}
+            </div>
+            <p className="truncate text-xs text-muted" title={Object.keys(s.columns).join(", ")}>{Object.keys(s.columns).join(", ")}</p>
           </li>
         ))}
       </ul>

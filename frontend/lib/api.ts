@@ -35,13 +35,14 @@ export type AgentEvent =
   | { type: "sources"; items: Source[] }
   | { type: "critic"; attempt: number; passed: boolean; grounded: boolean; complete: boolean; relevant: boolean; hallucination_risk: string; feedback: string }
   | { type: "revising"; attempt: number }
+  | { type: "restart"; reason: string }
   | { type: "chart"; chart: RawChart }
   | { type: "error"; message: string }
   | { type: "done"; run_id: number; answer: string; latency_ms: number; attempts: number; verified: boolean; input_tokens: number; output_tokens: number };
 
 /** POST a question and yield server-sent events as they arrive. */
-export async function* streamChat(question: string, history: { role: string; content: string }[]): AsyncGenerator<AgentEvent> {
-  const res = await api("/api/chat", { method: "POST", body: JSON.stringify({ question, history }) });
+export async function* streamChat(question: string, history: { role: string; content: string }[], analyze?: string): AsyncGenerator<AgentEvent> {
+  const res = await api("/api/chat", { method: "POST", body: JSON.stringify({ question, history, analyze }) });
   if (!res.ok || !res.body) throw new Error(`Request failed: ${res.status} ${await res.text()}`);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";

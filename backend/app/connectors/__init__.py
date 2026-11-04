@@ -99,6 +99,13 @@ def sync(conn_id: int, full: bool = False) -> None:
         since = None if full or not last else last - OVERLAP
         n = 0
         for doc in module.fetch(config, since, creds):
+            if doc.table_file:
+                from ..ingest import ingest_spreadsheet
+                try:
+                    ingest_spreadsheet(doc.table_file[0], doc.table_file[1], allowed=doc.allowed, source=kind,
+                                       connection_id=conn_id, identity=doc.external_id)
+                except ValueError:
+                    pass  # empty sheet
             pages = doc.pages or [(1, f"{doc.title}\n\n{doc.text}")]
             try:
                 upsert_document(doc.title, pages, source=kind, external_id=doc.external_id, url=doc.url,

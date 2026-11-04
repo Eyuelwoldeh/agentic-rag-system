@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from . import datasources
+from . import datasources, tableacl
 from .db import connect
 from .ingest import embed
 
@@ -70,6 +70,20 @@ CLIENT_TOOLS = [
                 "query": {"type": "string", "description": "A single SELECT statement"},
             },
             "required": ["source", "query"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "analyze_spreadsheet",
+        "description": (
+            "Calculate business insights for one spreadsheet table: overall trend, peak and low periods, biggest dips, "
+            "leading and fastest-growing segments, related measures, outliers, missing data. Also shows charts. "
+            "Use it first whenever someone asks to analyze a sheet or wants insights about it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"table": {"type": "string", "description": "Table name from list_data_sources (source 'uploads')"}},
+            "required": ["table"],
             "additionalProperties": False,
         },
     },
@@ -208,12 +222,15 @@ def execute(name: str, args: dict, ctx: Ctx) -> str:
 
     if name == "list_data_sources":
         out = []
+        titles = tableacl.visible_tables(ctx.email)
         for src in datasources.available(ctx.email, ctx.admin):
             try:
-                tables = list(datasources.list_tables(src["id"], ctx.email, ctx.admin))
+                names = list(datasources.list_tables(src["id"], ctx.email, ctx.admin))[:200]
+                # spreadsheets: show which file/tab each table came from, so "the Q3 forecast" can be matched
+                tables = [{"name": n, "from": titles[n]["title"]} for n in names] if src["id"] == datasources.UPLOADS else names
             except Exception as e:  # one broken warehouse shouldn't hide the others
                 tables = f"unavailable: {str(e)[:150]}"
-            out.append({**src, "tables": tables[:200] if isinstance(tables, list) else tables})
+            out.append({**src, "tables": tables})
         return json.dumps(out)
 
     if name == "describe_tables":
@@ -233,6 +250,17 @@ def execute(name: str, args: dict, ctx: Ctx) -> str:
         if result.get("note"):
             preview["note"] = result["note"]
         return json.dumps(preview, default=str)
+
+    if name == "analyze_spreadsheet":
+        from . import analysis  # late import: analysis imports this module
+
+        a = analysis.analyze(args["table"], ctx.email)
+        for chart in a["charts"]:
+            chart["id"] = f"C{len(ctx.charts) + 1}"
+            ctx.charts.append(chart)
+        return json.dumps({"spreadsheet": a["title"], "rows": a["rows"], "main_measure": a["metric"], "time_column": a["time"],
+                           "segment_column": a["segment"], "findings": a["findings"],
+                           "charts_shown": [c["title"] for c in a["charts"]]}, default=str)
 
     if name == "create_chart":
         result = ctx.results.get(args["result_id"])

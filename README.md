@@ -1,23 +1,25 @@
 # Agentic RAG
 
-A company knowledge assistant. Ask questions across your **documents**, **connected apps** (Slack, Drive, Notion, GitHub, websites), **live data** (BigQuery, Snowflake, Postgres, CSVs) and **any MCP-enabled tool**. Answers are cited and fact-checked, numbers become charts you can pin to dashboards, and everyone only sees what they're allowed to see.
+A company knowledge and analytics assistant. Ask questions across your **documents**, **connected apps** (Slack, Drive, Notion, GitHub, websites), **live data** (BigQuery, Snowflake, Postgres, CSVs) and **any MCP-enabled tool**. Answers are cited and fact-checked, numbers become charts you can pin to dashboards, and everyone only sees what they're allowed to see.
 
 ```
-Next.js ──SSE──▶ FastAPI ──▶ Claude (Opus 5.5) tool loop
+Next.js ──SSE──▶ FastAPI ──▶ Claude or ChatGPT tool loop (automatic failover between them)
                                 ├─ search_documents     → pgvector + full-text (hybrid), filtered by the viewer's access
                                 ├─ list_data_sources / describe_tables / run_sql → uploads, BigQuery, Snowflake, Postgres (read-only)
+                                ├─ analyze_spreadsheet  → calculated findings + charts (works with no AI too)
                                 ├─ create_chart         → chart events → "Pin to dashboard"
                                 ├─ MCP servers          → live tools in other apps (admin-allowlisted)
                                 └─ web_search, code_execution (Anthropic server tools)
-                             ──▶ Critic (Haiku 5.5) ─ fail → rewrite (max 3) ─▶ runs table → Activity & Insights
+                             ──▶ Fact-check critic ─ fail → rewrite (max 3) ─▶ runs table → Activity & Usage
 ```
 
 **What business users get**
 
 - **Chat** with suggested questions based on your actual data, a getting-started checklist, cited sources, a "Verified" badge, and thumbs up/down.
+- **Spreadsheet insights**: upload Excel (every tab) or CSV, or sync Google Sheets and Excel files from Drive, then click **Analyze**. Trends, leaders, fastest growers, dips hidden inside totals, related measures, outliers and data gaps are *calculated*, not guessed. The AI writes the story and searches your docs and Slack for what explains the changes.
 - **Charts** from any data question, with a table view and CSV export on every chart.
 - **Dashboards**: pin a chart, and it re-runs its query on view (cached 15 min). No AI cost to refresh. Share with the team; each viewer still only sees data they can access.
-- **Insights** (admins): usage, verified-answer rate, estimated cost, and **knowledge gaps**, the questions the assistant couldn't answer well, i.e. the docs you should write next.
+- **Usage** (admins): usage, verified-answer rate, estimated cost, and **knowledge gaps**, the questions the assistant couldn't answer well, i.e. the docs you should write next.
 
 ## Run it
 
@@ -35,6 +37,10 @@ cd frontend && npm install && npm run dev   # http://localhost:3000
 
 Try it with the sample files in `backend/evals/sample/` (upload them in the UI).
 
+## AI providers
+
+Admins pick **Claude** or **ChatGPT** in **Settings → AI model** and paste API keys there. Keys are verified before saving, stored encrypted and never shown again; the model list comes from the provider. The main provider is used first. If it's out of credits or its key fails, the other takes over automatically, and with neither available the app still answers with search results and calculated spreadsheet insights. Web search, code execution and MCP apps are Claude-only.
+
 ## Accounts & security
 
 - **First run:** open the app and create the admin account. Admins add teammates in **Settings → Team** (a one-time temporary password is shown once).
@@ -43,7 +49,7 @@ Try it with the sample files in `backend/evals/sample/` (upload them in the UI).
 - **CSRF:** state-changing requests must carry an `X-Requested-With` header, which forces a CORS preflight that only `FRONTEND_URL` passes.
 - **Passwords:** scrypt hashes, a 10-character minimum, and sign-in throttling (8 failures per 15 minutes per email+IP).
 - **Secrets at rest:** connector tokens and OAuth client secrets are Fernet-encrypted with `SECRETS_KEY`. They are write-only: the API never returns them.
-- **SQL tool:** a separate read-only Postgres role that can only `SELECT` from uploaded tables, with a 5-second timeout.
+- **Spreadsheet access is enforced by Postgres:** each user queries as their own database login role, granted `SELECT` only on the sheets they may see (private uploads, Drive sharing, connection access lists), inside a read-only transaction as a single prepared statement. Even SQL run inside functions (`query_to_xml`) can't reach someone else's sheet. Production note: the app's DB user needs `CREATEROLE`.
 - **Crawler:** refuses private, loopback and link-local addresses, and re-checks every redirect hop.
 
 ## Connectors

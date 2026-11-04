@@ -5,8 +5,8 @@ Access rules match search: a warehouse connection with an `allowed` list is only
 import threading
 import time
 
-from . import connectors
-from .db import connect, connect_reader
+from . import connectors, tableacl
+from .db import connect
 
 UPLOADS = "uploads"
 MAX_ROWS = 2000  # kept for charts/dashboards; the model sees a smaller preview
@@ -22,7 +22,7 @@ class AccessDenied(Exception):
 
 def available(email: str | None, admin: bool = False) -> list[dict]:
     """Sources this person may query."""
-    out = [{"id": UPLOADS, "name": "Uploaded spreadsheets (CSV)", "kind": "uploads", "dialect": "PostgreSQL (schema `data`)"}]
+    out = [{"id": UPLOADS, "name": "Spreadsheets (uploaded files and synced sheets)", "kind": "uploads", "dialect": "PostgreSQL"}]
     with connect() as conn:
         rows = conn.execute(
             "SELECT id, kind, name, account FROM connections WHERE enabled AND "
@@ -58,10 +58,12 @@ def invalidate_schema(conn_id: int) -> None:
 
 def list_tables(source: str, email: str | None, admin: bool = False) -> dict[str, dict[str, str]]:
     module, config, creds, cid = _resolve(source, email, admin)
-    if module is None:
-        with connect_reader() as conn:
+    if module is None:  # only the spreadsheets this person may see
+        names = list(tableacl.visible_tables(email))
+        with connect() as conn:
             rows = conn.execute("SELECT table_name, column_name, data_type FROM information_schema.columns "
-                                "WHERE table_schema = 'data' ORDER BY table_name, ordinal_position").fetchall()
+                                "WHERE table_schema = 'data' AND table_name = ANY(%s) ORDER BY table_name, ordinal_position",
+                                (names,)).fetchall()
         out: dict[str, dict[str, str]] = {}
         for t, c, typ in rows:
             out.setdefault(t, {})[c] = typ
@@ -79,8 +81,8 @@ def list_tables(source: str, email: str | None, admin: bool = False) -> dict[str
 def run(source: str, sql: str, email: str | None, admin: bool = False, max_rows: int = MAX_ROWS) -> dict:
     module, config, creds, _ = _resolve(source, email, admin)
     if module is None:
-        # uploads: least-privilege role (SELECT on `data` only) + read-only txn + one prepared statement
-        with connect_reader() as conn:
+        # spreadsheets: a per-user role GRANTed only that user's tables + read-only txn + one prepared statement
+        with tableacl.connect_as(tableacl.user_id_for(email), email) as conn:
             conn.autocommit = False
             conn.read_only = True
             cur = conn.execute(sql, prepare=True)

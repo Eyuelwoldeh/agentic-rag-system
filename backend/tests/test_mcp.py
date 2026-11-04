@@ -2,7 +2,7 @@
 import httpx
 import pytest
 
-from app import agent, connectors
+from app import agent, connectors, llm, tools
 from app.connectors import base, mcp
 from app.db import connect
 
@@ -66,7 +66,7 @@ def test_create_verifies_and_token_optional(monkeypatch, public):
         connectors.create("mcp", "bad", {"url": "https://mcp.example.com/mcp"})
 
 
-def test_agent_sends_only_permitted_servers(monkeypatch):
+def test_agent_sends_only_permitted_servers():
     with connect() as conn:
         open_id = conn.execute("INSERT INTO connections (kind, name, config) VALUES ('mcp', 'mcp-open', %s) RETURNING id",
                                ('{"url": "https://open.test/mcp", "tools": "search"}',)).fetchone()[0]
@@ -81,20 +81,24 @@ def test_agent_sends_only_permitted_servers(monkeypatch):
         captured.update(kwargs)
         raise Stop
 
-    monkeypatch.setattr(agent.client.beta.messages, "stream", fake_stream)
+    fake = type("C", (), {"beta": type("B", (), {"messages": type("M", (), {"stream": staticmethod(fake_stream)})})})
+    p = llm.AnthropicProvider("k", "claude-opus-5-5", client=fake)
+
+    def first_call(email):
+        captured.clear()
+        with pytest.raises(Stop):
+            next(p.loop([{"role": "user", "content": "hi"}], tools.Ctx(email=email), [], {"input_tokens": 0, "output_tokens": 0},
+                        "sys", agent.mcp_servers_for(email)))
+        return captured
+
     try:
         for email, expect in [("intern@acme.test", {f"mcp-{open_id}"}), ("boss@acme.test", {f"mcp-{open_id}", f"mcp-{locked_id}"})]:
-            captured.clear()
-            with pytest.raises(Stop):
-                next(agent._agent_loop([{"role": "user", "content": "hi"}], agent.tools.Ctx(email=email), [], {"input_tokens": 0, "output_tokens": 0}))
-            assert {s["name"] for s in captured["mcp_servers"]} == expect
-            assert {t["mcp_server_name"] for t in captured["tools"] if t.get("type") == "mcp_toolset"} == expect
-            assert agent.MCP_BETA in captured["betas"]
+            c = first_call(email)
+            assert {s["name"] for s in c["mcp_servers"]} == expect
+            assert {t["mcp_server_name"] for t in c["tools"] if t.get("type") == "mcp_toolset"} == expect
+            assert llm.MCP_BETA in c["betas"]
     finally:
         with connect() as conn:
             conn.execute("DELETE FROM connections WHERE id IN (%s, %s)", (open_id, locked_id))
-    # no MCP servers → no MCP params at all
-    captured.clear()
-    with pytest.raises(Stop):
-        next(agent._agent_loop([{"role": "user", "content": "hi"}], agent.tools.Ctx(email="x@acme.test"), [], {"input_tokens": 0, "output_tokens": 0}))
-    assert "mcp_servers" not in captured and agent.MCP_BETA not in captured["betas"]
+    c = first_call("x@acme.test")  # no MCP servers → no MCP params at all
+    assert "mcp_servers" not in c and llm.MCP_BETA not in c["betas"]

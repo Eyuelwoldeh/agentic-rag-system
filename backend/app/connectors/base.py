@@ -14,6 +14,7 @@ class Doc:
     updated_at: datetime | None = None
     pages: list[tuple[int, str]] | None = None  # set instead of `text` for paged files (PDFs)
     allowed: list[str] | None = None  # emails that can see this item at the source; None = everyone in the connection
+    table_file: tuple[str, bytes] | None = None  # (filename, .xlsx/.csv bytes): also load as queryable tables
 
 
 http = httpx.Client(timeout=30, follow_redirects=True)  # tests swap this for a MockTransport client

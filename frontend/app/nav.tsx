@@ -10,7 +10,7 @@ export default function Nav() {
   const path = usePathname();
   if (!me) return null;
   const admin = me.role === "admin";
-  const links = [["/", "Chat"], ["/dashboard", "Dashboard"], ...(admin ? [["/connectors", "Connectors"], ["/insights", "Insights"]] : []),
+  const links = [["/", "Chat"], ["/dashboard", "Dashboard"], ...(admin ? [["/connectors", "Connectors"], ["/usage", "Usage"]] : []),
     ["/runs", "Activity"], ["/settings", "Settings"]];
 
   async function signOut() {

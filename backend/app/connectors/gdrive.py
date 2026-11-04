@@ -30,8 +30,9 @@ API = "https://www.googleapis.com/drive/v3/files"
 EXPORT = {
     "application/vnd.google-apps.document": "text/plain",
     "application/vnd.google-apps.presentation": "text/plain",
-    "application/vnd.google-apps.spreadsheet": "text/csv",  # first sheet only (Drive export limitation)
 }
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+SHEETS = {"application/vnd.google-apps.spreadsheet", XLSX, "text/csv"}  # → queryable tables, every tab
 
 
 def parse_paste(text: str) -> dict:
@@ -106,6 +107,17 @@ def fetch(config: dict, since: datetime | None, creds: dict) -> Iterator[Doc]:
         q.append(f"'{folder}' in parents")
     for f in _list(headers, " and ".join(q)):
         mime = f["mimeType"]
+        if mime in SHEETS:
+            if mime == "application/vnd.google-apps.spreadsheet":  # export the whole workbook, not just tab 1
+                blob = request("GET", f"{API}/{f['id']}/export", params={"mimeType": XLSX}, headers=headers).content
+                fname = f"{f['name']}.xlsx"
+            else:
+                blob = request("GET", f"{API}/{f['id']}", params={"alt": "media", "supportsAllDrives": "true"}, headers=headers).content
+                fname = f["name"] if f["name"].lower().endswith((".xlsx", ".csv")) else f"{f['name']}.{'csv' if mime == 'text/csv' else 'xlsx'}"
+            yield Doc(external_id=f["id"], title=f["name"], text=f"Spreadsheet: {f['name']} (queryable as a table)",
+                      url=f.get("webViewLink"), allowed=_allowed(f, headers), table_file=(fname, blob),
+                      updated_at=datetime.fromisoformat(f["modifiedTime"].replace("Z", "+00:00")))
+            continue
         if mime in EXPORT:
             resp = request("GET", f"{API}/{f['id']}/export", params={"mimeType": EXPORT[mime]}, headers=headers)
             pages = [(1, resp.text)]

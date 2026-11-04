@@ -7,9 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import agent, auth, connectors, dashboards, datasources, insights, oauth
+from . import agent, auth, connectors, dashboards, datasources, insights, llm, oauth, tableacl
 from .db import connect, migrate
-from .ingest import ingest_csv, ingest_document
+from .ingest import drop_tables, ingest_document, ingest_spreadsheet
 from .security import FRONTEND_URL, User, csrf_middleware, current_user, require_admin
 
 
@@ -31,6 +31,7 @@ app.include_router(insights.router)
 
 MAX_UPLOAD = 25 * 1024 * 1024
 DOC_TYPES = (".pdf", ".txt", ".md")
+SHEET_TYPES = (".csv", ".xlsx", ".xlsm")
 
 
 # ---------- chat ----------
@@ -43,12 +44,14 @@ class Turn(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     history: list[Turn] = Field(default_factory=list, max_length=20)
+    analyze: str | None = Field(None, pattern=r"^[a-z0-9_]{1,63}$")  # spreadsheet table for the Analyze button
 
 
 @app.post("/api/chat")
 def chat(req: ChatRequest, user: User = Depends(current_user)):
     def sse():
-        for ev in agent.run(req.question, [t.model_dump() for t in req.history], user_id=user.id, email=user.email):
+        for ev in agent.run(req.question, [t.model_dump() for t in req.history], user_id=user.id, email=user.email,
+                            analyze=req.analyze):
             yield f"data: {json.dumps(ev, default=str)}\n\n"
 
     return StreamingResponse(sse(), media_type="text/event-stream")
@@ -64,14 +67,15 @@ async def upload(file: UploadFile, visibility: Literal["everyone", "private"] = 
         raise HTTPException(413, "File too large (max 25MB)")
     name = (file.filename or "upload")[:200]
     try:
-        if name.lower().endswith(".csv"):
-            return {"kind": "table", **ingest_csv(name, data)}
+        if name.lower().endswith(SHEET_TYPES):
+            tables = ingest_spreadsheet(name, data, user_id=user.id, allowed=[user.email] if visibility == "private" else None)
+            return {"kind": "tables", "visibility": visibility, "tables": tables}
         if name.lower().endswith(DOC_TYPES):
             doc = ingest_document(name, data, user_id=user.id, allowed=[user.email] if visibility == "private" else None)
             return {"kind": "document", "visibility": visibility, **doc}
     except ValueError as e:
         raise HTTPException(422, str(e))
-    raise HTTPException(415, f"Unsupported file type. Use {', '.join(DOC_TYPES)} or .csv")
+    raise HTTPException(415, f"Unsupported file type. Use {', '.join(DOC_TYPES + SHEET_TYPES)}")
 
 
 @app.get("/api/sources")
@@ -82,11 +86,24 @@ def list_sources(user: User = Depends(current_user)):
             "LEFT JOIN chunks c ON c.document_id = d.id WHERE d.source = 'upload' "
             "AND (d.allowed IS NULL OR %s = ANY(d.allowed)) GROUP BY d.id ORDER BY d.created_at DESC",
             (user.id, user.email)).fetchall()
+        mine = {r[0] for r in conn.execute("SELECT name FROM data_tables WHERE uploaded_by = %s", (user.id,)).fetchall()}
+    schemas = datasources.list_tables(datasources.UPLOADS, user.email)
+    titles = tableacl.visible_tables(user.email)
     return {
         "documents": [{"id": r[0], "name": r[1], "chunks": r[2], "created_at": r[3], "mine": r[4], "private": r[5]}
                       for r in docs],
-        "tables": datasources.list_tables(datasources.UPLOADS, user.email),
+        "tables": [{"name": t, "title": titles[t]["title"], "source": titles[t]["source"], "private": titles[t]["restricted"],
+                    "mine": t in mine, "columns": cols} for t, cols in schemas.items() if t in titles],
     }
+
+
+@app.delete("/api/tables/{name}")
+def delete_table(name: str, user: User = Depends(current_user)):
+    """Admins can delete any uploaded spreadsheet; members only their own. Synced sheets go with their connection."""
+    n = drop_tables("name = %s AND source = 'upload' AND (%s OR uploaded_by = %s)", (name, user.role == "admin", user.id))
+    if not n:
+        raise HTTPException(403, "You can only delete spreadsheets you uploaded")
+    return {"ok": True}
 
 
 @app.delete("/api/documents/{doc_id}")
@@ -184,7 +201,8 @@ def toggle_connection(conn_id: int, enabled: bool, _: User = Depends(require_adm
 
 @app.delete("/api/connections/{conn_id}")
 def delete_connection(conn_id: int, _: User = Depends(require_admin)):
-    """Removes the connection, its stored credentials, and everything it indexed."""
+    """Removes the connection, its stored credentials, and everything it indexed (documents and tables)."""
+    drop_tables("connection_id = %s", (conn_id,))
     with connect() as conn:
         conn.execute("DELETE FROM connections WHERE id = %s", (conn_id,))
     return {"ok": True}
@@ -235,5 +253,41 @@ def home(user: User = Depends(current_user)):
             *([{"id": "team", "label": "Invite your team (Settings → Team)", "done": users > 1}] if user.role == "admin" else []),
         ],
         "suggestions": suggestions[:4],
+        "ai": [p.label for p in llm.providers()],
         "counts": {"documents": len(docs), "tables": len(tables), "data_sources": len(data)},
     }
+
+
+# ---------- AI provider settings (admin) ----------
+
+class AISettings(BaseModel):
+    primary: Literal["anthropic", "openai"] | None = None
+    models: dict[Literal["anthropic", "openai"], str] | None = None
+    keys: dict[Literal["anthropic", "openai"], str] | None = None  # "" removes a stored key
+
+
+@app.get("/api/ai")
+def get_ai(_: User = Depends(require_admin)):
+    s = llm.ai_settings()
+    return {**s, "labels": llm.PROVIDERS}  # key values are never returned
+
+
+@app.put("/api/ai")
+def put_ai(body: AISettings, _: User = Depends(require_admin)):
+    for provider, key in (body.keys or {}).items():
+        if key:  # verify before saving: a typo'd key should fail here, not mid-conversation
+            try:
+                llm.list_models(provider, key.strip())
+            except Exception as e:
+                raise HTTPException(422, f"{llm.PROVIDERS[provider]} rejected that key: {str(e)[:200]}")
+    llm.save_settings(body.primary, {k: v.strip() for k, v in (body.models or {}).items() if v.strip()},
+                      {k: v.strip() for k, v in (body.keys or {}).items()})
+    return llm.ai_settings()
+
+
+@app.get("/api/ai/models/{provider}")
+def ai_models(provider: Literal["anthropic", "openai"], _: User = Depends(require_admin)):
+    try:
+        return {"models": llm.list_models(provider)}
+    except Exception as e:
+        raise HTTPException(422, str(e)[:300])

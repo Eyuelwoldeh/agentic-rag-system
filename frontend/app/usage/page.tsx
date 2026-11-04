@@ -17,7 +17,7 @@ const REASON_HELP: Record<string, string> = {
   "not verified": "The fact-checker couldn't confirm every claim",
 };
 
-export default function InsightsPage() {
+export default function UsagePage() {
   const [days, setDays] = useState(30);
   const [d, setD] = useState<Insights | null>(null);
   const [error, setError] = useState("");
@@ -41,7 +41,7 @@ export default function InsightsPage() {
     <main className="mx-auto max-w-5xl space-y-8 px-4 py-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold">Insights</h1>
+          <h1 className="text-lg font-semibold">Usage</h1>
           <p className="mt-1 text-sm text-muted">How your team uses the assistant, and where your knowledge base has gaps.</p>
         </div>
         <select value={days} onChange={(e) => setDays(+e.target.value)} className="rounded-md border border-line bg-panel px-2 py-1 text-sm" aria-label="Time range">

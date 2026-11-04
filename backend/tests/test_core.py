@@ -4,7 +4,7 @@ import pytest
 
 from app.db import connect
 from app.guardrails import redact
-from app.ingest import _infer_type, chunk, ingest_csv, ingest_document, table_name
+from app.ingest import _column, chunk, ingest_csv, ingest_document, table_name
 from app.datasources import run as run_query
 from app.tools import search_documents
 
@@ -28,10 +28,11 @@ def test_redact():
 
 
 def test_infer_type_and_table_name():
-    assert _infer_type(["1", "2", ""]) == "bigint"
-    assert _infer_type(["1.5", "2"]) == "double precision"
-    assert _infer_type(["a", "2"]) == "text"
+    assert _column(["1", "2", None])[0] == "bigint"
+    assert _column(["1.5", "2"])[0] == "double precision"
+    assert _column(["a", "2"])[0] == "text"
     assert table_name("Q3 Sales-2024.csv") == "q3_sales_2024"
+    assert _column(["00123", "02134"])[0] == "text"  # ZIP codes keep their leading zeros
     assert table_name("2024.csv") == "t_2024"
 
 

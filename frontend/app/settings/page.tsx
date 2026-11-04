@@ -11,6 +11,7 @@ export default function Settings() {
   const me = useMe()!;
   return (
     <main className="mx-auto max-w-3xl space-y-10 px-4 py-6">
+      {me.role === "admin" && <AIModel />}
       <Password />
       {me.role === "admin" && <Users myId={me.id} />}
       {me.role === "admin" && <OAuthApps />}
@@ -182,5 +183,99 @@ function AppForm({ app, onSaved }: { app: OAuthApp; onSaved: () => void }) {
       {err && <p className="text-sm text-bad">{err}</p>}
       <button className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-background">Save</button>
     </form>
+  );
+}
+
+type AIState = { primary: "anthropic" | "openai"; models: Record<string, string>; keys: Record<string, "settings" | "env" | null>; labels: Record<string, string> };
+const KEY_HELP: Record<string, { placeholder: string; where: string }> = {
+  anthropic: { placeholder: "sk-ant-…", where: "console.anthropic.com → API keys" },
+  openai: { placeholder: "sk-proj-…", where: "platform.openai.com → API keys" },
+};
+
+function AIModel() {
+  const [s, setS] = useState<AIState | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const load = useCallback(() => apiJson<AIState>("/api/ai").then(setS), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  if (!s) return null;
+
+  async function save(body: object, ok: string) {
+    setMsg(null);
+    try {
+      await apiJson("/api/ai", { method: "PUT", body: JSON.stringify(body) });
+      setMsg({ ok: true, text: ok });
+      load();
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    }
+  }
+
+  const configured = Object.entries(s.keys).filter(([, v]) => v).map(([k]) => k);
+  return (
+    <Section title="AI model" desc="Which AI writes answers. If the main one runs out of credits or its key stops working, the backup takes over automatically.">
+      <div className="space-y-3">
+        {(["anthropic", "openai"] as const).map((p) => (
+          <ProviderRow key={p} provider={p} label={s.labels[p]} keySource={s.keys[p]} model={s.models[p]} primary={s.primary === p}
+            onPrimary={() => save({ primary: p }, `${s.labels[p]} is now the main AI.`)}
+            onSave={(body, ok) => save(body, ok)} />
+        ))}
+      </div>
+      {configured.length === 0 && <p className="mt-2 text-sm text-warn">No AI connected yet: chat will show search results and calculated insights only.</p>}
+      {msg && <p className={`mt-2 text-sm ${msg.ok ? "text-ok" : "text-bad"}`} role="status">{msg.text}</p>}
+    </Section>
+  );
+}
+
+function ProviderRow({ provider, label, keySource, model, primary, onPrimary, onSave }: {
+  provider: "anthropic" | "openai"; label: string; keySource: "settings" | "env" | null; model: string; primary: boolean;
+  onPrimary: () => void; onSave: (body: object, ok: string) => void;
+}) {
+  const [key, setKey] = useState("");
+  const [models, setModels] = useState<string[] | null>(null);
+  const [pick, setPick] = useState(model);
+  useEffect(() => {
+    setPick(model);
+    if (!keySource) return setModels(null);
+    apiJson<{ models: string[] }>(`/api/ai/models/${provider}`).then((r) => setModels(r.models)).catch(() => setModels([]));
+  }, [provider, keySource, model]);
+
+  return (
+    <div className="rounded-lg border border-line bg-panel p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="font-medium">{label}</span>
+        <span className={keySource ? "text-ok" : "text-muted"}>
+          {keySource === "settings" ? "✓ key saved" : keySource === "env" ? "✓ key from server config" : "not connected"}
+        </span>
+        {primary ? <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">main</span>
+          : keySource && <button onClick={onPrimary} className="text-xs text-muted underline hover:text-foreground">Make main</button>}
+      </div>
+      <form className="mt-2 flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); onSave({ keys: { [provider]: key } }, `${label} key saved.`); setKey(""); }}>
+        <input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder={keySource ? "Paste a new key to replace it" : KEY_HELP[provider].placeholder}
+          className={`${input} min-w-48 flex-1 font-mono`} aria-label={`${label} API key`} />
+        <button disabled={!key.trim()} className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-background disabled:opacity-40">{keySource ? "Replace" : "Connect"}</button>
+        {keySource === "settings" && (
+          <button type="button" onClick={() => confirm(`Remove the saved ${label} key?`) && onSave({ keys: { [provider]: "" } }, `${label} key removed.`)}
+            className="rounded-md border border-line px-3 py-1.5 text-sm hover:border-bad hover:text-bad">Remove</button>
+        )}
+      </form>
+      <p className="mt-1 text-xs text-muted">Get a key at {KEY_HELP[provider].where}. It&apos;s checked first, then stored encrypted.</p>
+      {keySource && (
+        <label className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-muted">Model</span>
+          {models && models.length > 0 ? (
+            <select value={pick} onChange={(e) => { setPick(e.target.value); onSave({ models: { [provider]: e.target.value } }, `${label} will use ${e.target.value}.`); }}
+              className="rounded border border-line bg-background px-1.5 py-1">
+              {!models.includes(pick) && <option value={pick}>{pick}</option>}
+              {models.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          ) : (
+            <span className="font-mono">{pick}</span>
+          )}
+          {provider === "openai" && <span className="text-muted">· web search and connected apps (MCP) are Claude-only</span>}
+        </label>
+      )}
+    </div>
   );
 }

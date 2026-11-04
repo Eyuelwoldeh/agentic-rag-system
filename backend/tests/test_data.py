@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app import datasources, tools
-from app.agent import SCHEMAS, _valid_input
+from app.llm import SCHEMAS, valid_input
 from app.connectors import base, bigquery, postgres, snowflake
 from app.connectors.base import assert_read_query
 from app.db import connect
@@ -116,7 +116,7 @@ def test_sql_to_chart_flow():
     try:
         ctx = tools.Ctx(email="ana@acme.test")
         srcs = json.loads(tools.execute("list_data_sources", {}, ctx))
-        assert srcs[0]["id"] == "uploads" and "chart_sales" in srcs[0]["tables"]
+        assert srcs[0]["id"] == "uploads" and {"name": "chart_sales", "from": "chart_sales.csv"} in srcs[0]["tables"]
         cols = json.loads(tools.execute("describe_tables", {"source": "uploads", "tables": ["chart_sales", "nope"]}, ctx))
         assert cols["tables"]["chart_sales"]["revenue"] == "bigint" and cols["unknown"] == ["nope"]
         out = json.loads(tools.execute("run_sql", {"source": "uploads", "query": "SELECT month, revenue FROM chart_sales ORDER BY month"}, ctx))
@@ -138,16 +138,11 @@ def test_sql_to_chart_flow():
             conn.execute("DROP TABLE IF EXISTS data.chart_sales")
 
 
-class _B:
-    def __init__(self, i):
-        self.input = i
-
-
 def test_tool_input_validation():
     chart = SCHEMAS["create_chart"]
-    assert _valid_input(_B({"result_id": "R1", "type": "bar", "title": "t", "x": "a", "y": ["b"]}), chart)
-    assert not _valid_input(_B({"result_id": "R1", "type": "pie", "title": "t", "y": ["b"]}), chart)  # enum
-    assert not _valid_input(_B({"result_id": "R1", "type": "bar", "title": "t", "y": []}), chart)  # empty array
-    assert not _valid_input(_B({"result_id": "R1", "type": "bar", "title": "t", "y": "b"}), chart)  # wrong type
-    assert not _valid_input(_B({"query": "x", "k": "5"}), SCHEMAS["search_documents"])
-    assert not _valid_input(_B({"query": "x", "evil": 1}), SCHEMAS["search_documents"])
+    assert valid_input({"result_id": "R1", "type": "bar", "title": "t", "x": "a", "y": ["b"]}, chart)
+    assert not valid_input({"result_id": "R1", "type": "pie", "title": "t", "y": ["b"]}, chart)  # enum
+    assert not valid_input({"result_id": "R1", "type": "bar", "title": "t", "y": []}, chart)  # empty array
+    assert not valid_input({"result_id": "R1", "type": "bar", "title": "t", "y": "b"}, chart)  # wrong type
+    assert not valid_input({"query": "x", "k": "5"}, SCHEMAS["search_documents"])
+    assert not valid_input({"query": "x", "evil": 1}, SCHEMAS["search_documents"])
