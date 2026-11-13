@@ -212,7 +212,10 @@ def ingest_spreadsheet(filename: str, data: bytes, *, user_id: int | None = None
         for sheet, cols, rows in sheets:
             ext = f"{identity}::{sheet or ''}"
             title = f"{filename} › {sheet}" if sheet and len(sheets) > 1 else filename
-            name = _table_for(conn, ext, connection_id, table_name(f"{filename}_{sheet}" if sheet and len(sheets) > 1 else filename))
+            base = table_name(filename)
+            if sheet and len(sheets) > 1:  # "Q3.xlsx" + tab "Sales" → q3_sales (strip the extension first, then add the tab)
+                base = f"{base[:40]}_{re.sub(r'\W+', '_', sheet.lower()).strip('_')[:14]}".rstrip("_")
+            name = _table_for(conn, ext, connection_id, base)
             typed = [_column([r[i] for r in rows]) for i in range(len(cols))]
             ident = sql.Identifier("data", name)
             with conn.transaction():

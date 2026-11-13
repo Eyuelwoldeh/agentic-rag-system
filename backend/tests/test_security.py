@@ -75,6 +75,9 @@ def test_member_permissions(admin):
     # password change signs out other sessions
     other = client()
     other.post("/api/auth/login", json={"email": "mem@acme.test", "password": created["temporary_password"]})
+    # a wrong current password is an input error (400), not "signed out" (401): the app must not bounce to /login
+    wrong = member.post("/api/auth/password", json={"current": "nope", "new": "a-much-better-pw"})
+    assert wrong.status_code == 400 and member.get("/api/auth/me").status_code == 200
     assert member.post("/api/auth/password", json={"current": created["temporary_password"], "new": "a-much-better-pw"}).status_code == 200
     assert other.get("/api/auth/me").status_code == 401
     assert member.get("/api/auth/me").status_code == 200

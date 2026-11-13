@@ -19,6 +19,6 @@ export function MeProvider({ children }: { children: React.ReactNode }) {
   }, [onLogin]);
 
   if (onLogin) return <>{children}</>;
-  if (!me) return <p className="p-6 text-sm text-muted">Loading…</p>;
+  if (!me) return <div className="p-6 text-sm text-muted" aria-busy="true">Loading…</div>;
   return <MeContext.Provider value={me}>{children}</MeContext.Provider>;
 }

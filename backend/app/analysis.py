@@ -16,7 +16,8 @@ from .tools import _jsonable, build_chart
 
 MAX_ROWS = 50_000
 NUMERIC = ("bigint", "integer", "smallint", "double precision", "numeric", "real")
-METRIC_HINT = re.compile(r"revenue|sales|amount|total|profit|cost|price|value|spend|income|units|qty|quantity|orders|count|margin", re.I)
+METRIC_HINT = re.compile(r"revenue|sales|amount|total|profit|cost|price|value|spend|income|margin", re.I)  # money first
+COUNT_HINT = re.compile(r"units|qty|quantity|orders|count|transactions", re.I)
 TIME_HINT = re.compile(r"month|date|day|week|period|time|created|year|quarter", re.I)
 YEAR_MONTH = re.compile(r"^\d{4}-\d{2}$")
 SEGMENT_HINT = re.compile(r"region|country|state|city|market|segment|channel|category|team|department|customer|client|"
@@ -71,7 +72,8 @@ def analyze(table: str, email: str | None) -> dict:
                 or (schema.get(c) == "text" and all(YEAR_MONTH.match(str(v)) for v in col[c] if v is not None) and any(col[c]))]
     texts = [c for c in cols if schema.get(c) == "text" and c not in timecols]
 
-    metric = next((c for c in numeric if METRIC_HINT.search(c)), None) or max(numeric, key=lambda c: abs(sum(nums(c))), default=None)
+    metric = (next((c for c in numeric if METRIC_HINT.search(c)), None) or next((c for c in numeric if COUNT_HINT.search(c)), None)
+              or max(numeric, key=lambda c: abs(sum(nums(c))), default=None))
     time = next((c for c in timecols if TIME_HINT.search(c)), timecols[0] if timecols else None)
     def seg_score(c):  # business-meaningful names first, then a readable number of groups (3-12 is ideal)
         k = len({v for v in col[c] if v is not None})
@@ -104,19 +106,34 @@ def analyze(table: str, email: str | None) -> dict:
                              "headline": f"{metric} went from {compact(v0)} to {compact(v1)} ({pct(v0, v1) or 'n/a'}) between {p0} and {p1}",
                              "detail": f"Peak: {best[0]} ({compact(best[1])}). Low: {worst[0]} ({compact(worst[1])}). "
                                        f"Up in {ups} of {len(series) - 1} periods."})
-            drops = [(b[0], a[0], (b[1] - a[1]) / abs(a[1])) for a, b in zip(series, series[1:]) if a[1]]
-            worst_drop = min(drops, key=lambda d: d[2], default=None)
+            worst_drop = min(_drops(dict(series)), key=lambda d: d[2], default=None)
             if worst_drop and worst_drop[2] < -0.02:
                 findings.append({"kind": "anomaly", "headline": f"Biggest drop: {worst_drop[0]} ({worst_drop[2] * 100:+.1f}% vs {worst_drop[1]})",
-                                 "detail": "Worth checking what happened then: a pricing change, an outage, seasonality?"})
+                                 "detail": "Worth checking what happened then: a pricing change, an outage, a lost customer?"})
             if len(series) >= 3:
                 last, prev = series[-1][1], series[-2][1]
                 findings.append({"kind": "trend", "headline": f"Latest period ({series[-1][0]}): {compact(last)}, {pct(prev, last) or 'n/a'} vs the period before",
                                  "detail": ""})
 
     # --- segments: who contributes most, who grows fastest, where totals hide a dip (top 2 breakdowns)
-    for seg in segs[:2] if metric else []:
+    chosen = []
+    for seg in segs:  # top 2 breakdowns, skipping one that just regroups another (e.g. channel derived from location)
+        if len(chosen) == 2 or not metric:
+            break
+        if any(_determines(col[c], col[seg]) for c in chosen):
+            continue
+        chosen.append(seg)
         findings += _segment_findings(seg, metric, time, series, col)
+
+    # --- no time or category column: still give the basics, and say what would unlock more
+    if metric and not time and not segs:
+        vals = nums(metric)
+        if len(vals) >= 2:
+            first, last = vals[0], vals[-1]
+            findings.append({"kind": "trend", "headline": f"{metric} ranges from {compact(min(vals))} to {compact(max(vals))} (average {compact(statistics.fmean(vals))})",
+                             "detail": f"From the first row to the last it changes {pct(first, last) or 'n/a'} ({compact(first)} to {compact(last)}), assuming rows are in time order."})
+        findings.append({"kind": "quality", "headline": "No date or category column",
+                         "detail": "Add a date column (for example observation_date) to see trends over time, or a category such as region or product to see breakdowns."})
 
     # --- relationships between measures
     for i, a in enumerate(numeric):
@@ -183,15 +200,40 @@ def _segment_findings(segment, metric, time, series, col) -> list[dict]:
         if fast[1] - slow[1] >= 0.05:  # only a real gap is an insight
             out.append({"kind": "segment", "headline": f"Fastest growing {segment}: {fast[0]} ({fast[1] * 100:+.0f}% from {first_p} to {last_p})",
                         "detail": f"Slowest: {slow[0]} ({slow[1] * 100:+.0f}%)."})
-    drops = []
-    for s_, ser in per.items():  # sharpest period-over-period drop inside one group: dips that totals hide
-        pts = sorted(ser.items())
-        drops += [(s_, b[0], a[0], (b[1] - a[1]) / abs(a[1])) for a, b in zip(pts, pts[1:]) if a[1]]
-    sharpest = min(drops, key=lambda d: d[3], default=None)
-    if sharpest and sharpest[3] <= -0.05:
-        out.append({"kind": "anomaly", "headline": f"{sharpest[0]} fell {sharpest[3] * -100:.1f}% in {sharpest[1]} (vs {sharpest[2]})",
-                    "detail": f"The overall total hides this. Worth asking what changed for {sharpest[0]} then."})
+    drops = sorted(((s_, *d) for s_, ser in per.items() for d in _drops(ser)), key=lambda d: d[3])  # dips totals hide
+    reported = []
+    for g, period, vs, change in drops:  # the two sharpest dips, from different groups
+        if change > -0.05 or len(reported) == 2:
+            break
+        if g in reported:
+            continue
+        reported.append(g)
+        out.append({"kind": "anomaly", "headline": f"{g} fell {change * -100:.1f}% in {period} (vs {vs})",
+                    "detail": f"The overall total hides this. Worth asking what changed for {g} then."})
     return out
+
+
+def _determines(a: list, b: list) -> bool:
+    """True if each value of column a always maps to the same value of b (b is just a regrouping of a)."""
+    seen = {}
+    for x, y in zip(a, b):
+        if x is not None and seen.setdefault(x, y) != y:
+            return False
+    return True
+
+
+def _drops(ser: dict[str, float]) -> list[tuple[str, str, float]]:
+    """(period, compared_to, change) for each period. With 13+ months of monthly data, compare with the same month
+    last year so normal seasonality (holiday peaks, summer slumps) isn't mistaken for a problem; else vs the prior period."""
+    pts = sorted(ser.items())
+    if len(pts) >= 13 and all(YEAR_MONTH.match(p) for p, _ in pts):
+        out = []
+        for p, v in pts:
+            prev = f"{int(p[:4]) - 1}{p[4:]}"
+            if ser.get(prev):
+                out.append((p, f"{prev}, same month last year", (v - ser[prev]) / abs(ser[prev])))
+        return out
+    return [(b[0], a[0], (b[1] - a[1]) / abs(a[1])) for a, b in zip(pts, pts[1:]) if a[1]]
 
 
 def _charts(table, title, metric, time, segment, monthly, schema, email) -> list[dict]:

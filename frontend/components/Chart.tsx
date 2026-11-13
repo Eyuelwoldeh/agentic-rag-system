@@ -1,6 +1,8 @@
 "use client";
 
+import { Download } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Button } from "./ui";
 
 export type ChartSpec = { type: "line" | "bar" | "number" | "table"; x?: string | null; y: string[] };
 export type ChartData = { title: string; spec: ChartSpec; columns: string[]; rows: unknown[][]; truncated?: boolean };
@@ -11,6 +13,15 @@ const M = { top: 12, right: 16, bottom: 28, left: 48 };
 
 const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 const full = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-03-01" → "Mar 2026" (month starts), "2026-03-15" → "Mar 15", anything else unchanged. */
+export function fmtLabel(v: string) {
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(v);
+  if (!m) return v;
+  const mon = MONTHS[+m[2] - 1];
+  return !m[3] || m[3] === "01" ? `${mon} ${m[1]}` : `${mon} ${+m[3]}`;
+}
+
 export const fmt = (v: unknown) => (typeof v === "number" ? (Math.abs(v) >= 10000 ? compact.format(v) : full.format(v)) : String(v ?? "–"));
 
 function niceTicks(min: number, max: number, count = 4): number[] {
@@ -47,23 +58,20 @@ export default function Chart({ data, action, compactHeader }: { data: ChartData
   const [asTable, setAsTable] = useState(data.spec.type === "table");
   const canChart = data.spec.type !== "table";
   return (
-    <figure className="rounded-lg border border-line bg-panel p-3">
-      <figcaption className="mb-2 flex flex-wrap items-center gap-2">
-        <span className={`min-w-0 flex-1 font-medium ${compactHeader ? "truncate text-sm" : ""}`}>{data.title}</span>
-        <span className="flex items-center gap-1 text-xs">
-          {canChart && (
-            <button onClick={() => setAsTable(!asTable)} className="rounded border border-line px-2 py-0.5 text-muted hover:text-foreground">
-              {asTable ? "Chart" : "Table"}
-            </button>
-          )}
-          <button onClick={() => downloadCSV(data.title, data.columns, data.rows)} className="rounded border border-line px-2 py-0.5 text-muted hover:text-foreground" title="Download as CSV (opens in Excel / Sheets)">
-            CSV
-          </button>
+    <figure className="rounded border border-line bg-panel">
+      <figcaption className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+        <span className={`min-w-0 flex-1 text-sm font-semibold ${compactHeader ? "truncate" : ""}`}>{data.title}</span>
+        <span className="flex items-center gap-1">
+          {canChart && <Button size="sm" variant="ghost" onClick={() => setAsTable(!asTable)}>{asTable ? "Chart view" : "Table view"}</Button>}
+          <Button size="sm" variant="ghost" icon={<Download className="h-3.5 w-3.5" />} onClick={() => downloadCSV(data.title, data.columns, data.rows)}
+            title="Download as CSV (opens in Excel or Google Sheets)">CSV</Button>
           {action}
         </span>
       </figcaption>
-      {asTable || !canChart ? <DataTable columns={data.columns} rows={data.rows} /> : data.spec.type === "number" ? <Stat data={data} /> : <Plot data={data} />}
-      {data.truncated && <p className="mt-1 text-xs text-muted">Showing the first {data.rows.length.toLocaleString()} rows.</p>}
+      <div className="p-3">
+        {asTable || !canChart ? <DataTable columns={data.columns} rows={data.rows} /> : data.spec.type === "number" ? <Stat data={data} /> : <Plot data={data} />}
+        {data.truncated && <p className="mt-1 text-xs text-muted">Showing the first {data.rows.length.toLocaleString()} rows.</p>}
+      </div>
     </figure>
   );
 }
@@ -71,15 +79,13 @@ export default function Chart({ data, action, compactHeader }: { data: ChartData
 function DataTable({ columns, rows }: { columns: string[]; rows: unknown[][] }) {
   return (
     <div className="max-h-72 overflow-auto">
-      <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-panel">
-          <tr>{columns.map((c) => <th key={c} className="border-b border-line px-2 py-1 text-left font-medium text-muted">{c}</th>)}</tr>
+      <table className="data-table">
+        <thead className="sticky top-0">
+          <tr>{columns.map((c, j) => <th key={c} className={typeof rows[0]?.[j] === "number" ? "num" : ""}>{c}</th>)}</tr>
         </thead>
         <tbody>
           {rows.slice(0, 500).map((r, i) => (
-            <tr key={i} className="border-b border-line/60">
-              {r.map((v, j) => <td key={j} className={`px-2 py-1 ${typeof v === "number" ? "text-right tabular-nums" : ""}`}>{fmt(v)}</td>)}
-            </tr>
+            <tr key={i}>{r.map((v, j) => <td key={j} className={typeof v === "number" ? "num" : ""}>{fmt(v)}</td>)}</tr>
           ))}
         </tbody>
       </table>
@@ -93,8 +99,8 @@ function Stat({ data }: { data: ChartData }) {
   const value = values.length > 1 ? values[values.length - 1] : values[0];
   return (
     <div className="py-2">
-      <div className="text-5xl font-semibold tracking-tight">{fmt(value)}</div>
-      <div className="mt-1 text-xs text-muted">{data.spec.y[0]}</div>
+      <div className="text-[42px] leading-[50px] font-light tabular-nums">{fmt(value)}</div>
+      <div className="mt-1 text-xs text-text2">{data.spec.y[0].replace(/_/g, " ")}</div>
     </div>
   );
 }
@@ -117,7 +123,7 @@ function Plot({ data }: { data: ChartData }) {
   const { spec } = data;
   const xi = data.columns.indexOf(spec.x ?? "");
   const ys = spec.y.map((y) => data.columns.indexOf(y));
-  const labels = data.rows.map((r) => String(r[xi] ?? ""));
+  const labels = data.rows.map((r) => fmtLabel(String(r[xi] ?? "")));
   const series = ys.map((i) => data.rows.map((r) => (typeof r[i] === "number" ? (r[i] as number) : null)));
   const all = series.flat().filter((v): v is number => v != null);
   const ticks = niceTicks(Math.min(0, ...all), Math.max(0, ...all));

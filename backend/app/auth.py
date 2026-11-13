@@ -88,7 +88,8 @@ def change_password(body: PasswordChange, request: Request, response: Response, 
     with connect() as conn:
         stored = conn.execute("SELECT password_hash FROM users WHERE id = %s", (user.id,)).fetchone()[0]
     if not verify_password(body.current, stored):
-        raise HTTPException(401, "Current password is wrong")
+        # 400, not 401: the user IS signed in; a 401 makes the app treat them as signed out
+        raise HTTPException(400, "Current password is wrong")
     check_password_policy(body.new)
     with connect() as conn:
         conn.execute("UPDATE users SET password_hash = %s WHERE id = %s", (hash_password(body.new), user.id))

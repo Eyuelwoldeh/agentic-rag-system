@@ -79,3 +79,25 @@ def test_picks_meaningful_breakdown_and_skips_fake_gaps():
     assert "Fastest growing region: Asia" in h
     assert "Fastest growing product" not in h  # Pro and Starter grew the same: not an insight
     assert [c["title"] for c in a["charts"]] == ["Total revenue", "Revenue over time", "Revenue by region"]
+
+
+def test_single_column_sheet_still_useful():
+    a = analysis.analyze(sheet("an-gdp.csv", ["GDPC1"] + [str(2000 + i * 10) for i in range(12)]), None)
+    h = headlines(a)
+    assert "ranges from 2K to 2.1K" in h and any(f["headline"] == "No date or category column" for f in a["findings"])
+
+
+def test_seasonal_business_flags_real_dip_not_january():
+    """Holiday peaks make every January look like a crash month-over-month; year-over-year finds the real problem."""
+    season = {1: .9, 2: .95, 3: 1, 4: 1, 5: 1, 6: 1, 7: .97, 8: .97, 9: 1, 10: 1, 11: 1.1, 12: 1.4}
+    rows = ["month,store,revenue,units"]
+    for y in (2025, 2026):
+        for m in range(1, 13 if y == 2025 else 11):
+            for store in ("Airport", "Riverside"):
+                v = 1000 * season[m] * (1.04 if y == 2026 else 1) * (0.68 if (store == "Riverside" and y == 2026 and m in (7, 8)) else 1)
+                rows.append(f"{y}-{m:02d}-01,{store},{v:.0f},{int(v / 9)}")
+    a = analysis.analyze(sheet("an-season.csv", rows), None)
+    h = headlines(a)
+    assert a["metric"] == "revenue"  # money beats unit counts
+    assert "Riverside fell 29.3% in 2026-07 (vs 2025-07, same month last year)" in h
+    assert "in 2026-01" not in h  # the post-holiday January dip is normal, not flagged

@@ -115,7 +115,7 @@ def sync(conn_id: int, full: bool = False) -> None:
                 pass  # no extractable text
         with connect() as conn:
             conn.execute("UPDATE connections SET status = %s, last_synced_at = %s WHERE id = %s",
-                         (f"ok · {n} updated", started, conn_id))
+                         (f"ok, {n} updated", started, conn_id))
     except Exception as e:
         with connect() as conn:
             conn.execute("UPDATE connections SET status = 'error', error = %s WHERE id = %s", (str(e)[:2000], conn_id))
@@ -187,7 +187,7 @@ def create(kind: str, name: str, config: dict, creds: dict | None = None, user_i
             account = REGISTRY[kind].verify(cfg, creds) if hasattr(REGISTRY[kind], "verify") else REGISTRY[kind].whoami(creds)
             if is_warehouse(kind):  # proves credentials *and* config (project, datasets, account...) work
                 n = len(REGISTRY[kind].list_tables(cfg, creds))
-                account = " · ".join(filter(None, [account, f"{n} tables"]))
+                account = ", ".join(filter(None, [account, f"{n} tables"]))
         except Exception as e:
             raise ValueError(f"{REGISTRY[kind].LABEL} rejected these settings: {str(e)[:300]}")
     with connect() as conn:

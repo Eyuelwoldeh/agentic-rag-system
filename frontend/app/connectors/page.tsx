@@ -1,14 +1,17 @@
 "use client";
 
+import { Database, FileText, Globe, MoreHorizontal, Plug, Plus, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import SortableTable, { type Column } from "@/components/SortableTable";
+import { Button, EmptyState, Field, inputCls, Page, PageHeader, Panel, Skeleton, Status, useUI } from "@/components/ui";
 import { API, api, apiJson } from "@/lib/api";
 import { ago } from "@/lib/time";
 
-type Field = { key: string; label: string; help: string; required?: boolean };
+type FieldDef = { key: string; label: string; help: string; required?: boolean };
 type Paste = { label: string; placeholder: string; help: string; multiline?: boolean; optional?: boolean };
 type Available = {
-  kind: string; label: string; config: Field[]; doc: string; blurb: string; category: "index" | "warehouse" | "tool";
+  kind: string; label: string; config: FieldDef[]; doc: string; blurb: string; category: "index" | "warehouse" | "tool";
   guide: string[]; oauth: boolean; oauth_ready: boolean; paste: Paste | null;
 };
 type Connection = {
@@ -17,28 +20,27 @@ type Connection = {
 };
 type Catalog = { available: Available[]; connections: Connection[]; interval_minutes: number };
 
-const ICON: Record<string, string> = { slack: "#", gdrive: "▲", notion: "N", github: "⌥", web: "◎", bigquery: "BQ", snowflake: "❄", postgres: "PG", mcp: "⚡" };
-const GROUPS: { category: Available["category"]; title: string; blurb: string }[] = [
-  { category: "index", title: "Knowledge", blurb: "Documents and conversations, copied into search and kept in sync." },
-  { category: "warehouse", title: "Data", blurb: "Databases queried live for numbers and charts. Nothing is copied; queries are read-only." },
-  { category: "tool", title: "Apps", blurb: "Any app with an MCP server. The assistant can look things up there, or take actions you allow." },
+const GROUPS: { category: Available["category"]; title: string; blurb: string; Icon: typeof Plug }[] = [
+  { category: "index", title: "Knowledge sources", blurb: "Copied into search and kept in sync.", Icon: FileText },
+  { category: "warehouse", title: "Databases", blurb: "Queried live and read-only, for figures and charts. Nothing is copied.", Icon: Database },
+  { category: "tool", title: "Apps", blurb: "Tools with an MCP server, used live by the assistant.", Icon: Globe },
 ];
 
 export default function Connectors() {
+  const { toast } = useUI();
   const [cat, setCat] = useState<Catalog | null>(null);
-  const [error, setError] = useState("");
+  const [picking, setPicking] = useState(false);
   const [adding, setAdding] = useState<Available | null>(null);
-  const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const load = useCallback(() => apiJson<Catalog>("/api/connectors").then((c) => { setCat(c); setError(""); }).catch((e) => setError(e.message)), []);
+  const load = useCallback(() => apiJson<Catalog>("/api/connectors").then(setCat).catch((e) => toast(e.message, "error")), [toast]);
 
   useEffect(() => {
     load();
     const q = new URLSearchParams(location.search); // result of an OAuth round-trip
-    if (q.get("connected")) setBanner({ ok: true, text: "Connected. The first sync is running." });
-    if (q.get("error")) setBanner({ ok: false, text: q.get("error")! });
+    if (q.get("connected")) toast("Connected. The first sync has started.");
+    if (q.get("error")) toast(q.get("error")!, "error");
     if (q.size) history.replaceState(null, "", "/connectors");
-  }, [load]);
+  }, [load, toast]);
 
   const busy = cat?.connections.some((c) => c.running || c.status === "syncing");
   useEffect(() => {
@@ -47,114 +49,171 @@ export default function Connectors() {
     return () => clearInterval(t);
   }, [busy, load]);
 
-  async function act(path: string, method = "POST") {
-    await api(path, { method });
-    setTimeout(load, 300);
+  const byKind = Object.fromEntries((cat?.available ?? []).map((a) => [a.kind, a]));
+
+  return (
+    <>
+      <PageHeader title="Connectors" description="Connect the places your company's knowledge and data live. People only see results from sources they're allowed to access."
+        actions={<Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setPicking(true)}>Add connector</Button>} />
+      <Page wide>
+        <Panel title="Connections" description={cat ? (cat.interval_minutes > 0 ? `Knowledge sources re-sync every ${cat.interval_minutes} minutes, picking up only changes.` : "Automatic sync is off. Use Sync now.") : undefined} flush>
+          {!cat ? <div className="space-y-2 p-4"><Skeleton className="h-8" /><Skeleton className="h-8" /></div> : (
+            <ConnectionsTable rows={cat.connections} byKind={byKind} onChange={load}
+              empty={<EmptyState icon={<Plug className="h-6 w-6" />} title="No connections yet"
+                body="Add Slack, Google Drive, a database or another source so Ask can answer from it."
+                action={<Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setPicking(true)}>Add connector</Button>} />} />
+          )}
+        </Panel>
+      </Page>
+      {picking && cat && <CatalogPanel available={cat.available} onClose={() => setPicking(false)} onPick={(a) => { setPicking(false); setAdding(a); }} />}
+      {adding && <AddPanel a={adding} onClose={() => setAdding(null)} onAdded={() => { toast(`${adding.label} connected.`); setAdding(null); load(); }} />}
+    </>
+  );
+}
+
+function statusOf(c: Connection, live: boolean): React.ReactNode {
+  if (c.running || c.status === "syncing") return <Status kind="running">{live ? "Checking" : "Syncing"}</Status>;
+  if (c.status === "error") return <Status kind="error" title={c.error ?? ""}>Needs attention</Status>;
+  if (!c.enabled) return <Status kind="neutral">Paused</Status>;
+  if (live) return <Status kind="success">Live</Status>;
+  if (c.last_synced_at) return <Status kind="success">Synced</Status>;
+  return <Status kind="neutral">Not synced</Status>;
+}
+
+function ConnectionsTable({ rows, byKind, onChange, empty }: { rows: Connection[]; byKind: Record<string, Available>; onChange: () => void; empty: React.ReactNode }) {
+  const { confirm, toast } = useUI();
+  const [access, setAccess] = useState<Connection | null>(null);
+
+  async function act(c: Connection, path: string, method: string, done: string) {
+    const res = await api(path, { method });
+    if (res.ok) toast(done);
+    else toast((await res.json()).detail, "error");
+    setTimeout(onChange, 300);
+  }
+  async function remove(c: Connection, live: boolean) {
+    if (await confirm({ title: `Remove ${c.name}?`, action: "Remove", danger: true,
+      body: live ? "Its stored credentials are deleted and people can no longer query it." : `Its ${c.documents} indexed documents and stored credentials are deleted. This can't be undone.` }))
+      act(c, `/api/connections/${c.id}`, "DELETE", `${c.name} removed.`);
   }
 
-  if (error) return <p className="p-6 text-bad">{error}</p>;
-  if (!cat) return <p className="p-6 text-sm text-muted">Loading…</p>;
-  const byKind = Object.fromEntries(cat.available.map((a) => [a.kind, a]));
-
+  const columns: Column<Connection>[] = [
+    { key: "name", label: "Name", sort: (c) => c.name.toLowerCase(), render: (c) => (
+      <span className="block min-w-0">
+        <span className="block truncate font-medium">{c.name}</span>
+        <span className="block truncate text-xs text-muted">{c.account ?? byKind[c.kind]?.label}</span>
+      </span>
+    ) },
+    { key: "type", label: "Type", sort: (c) => c.kind, render: (c) => <span className="text-text2">{byKind[c.kind]?.label ?? c.kind}</span> },
+    { key: "status", label: "Status", render: (c) => statusOf(c, byKind[c.kind]?.category !== "index") },
+    { key: "access", label: "Access", render: (c) => c.allowed ? <Status kind="restricted">{c.allowed.length} {c.allowed.length === 1 ? "person" : "people"}</Status> : <span className="text-text2">Everyone</span> },
+    { key: "docs", label: "Documents", num: true, sort: (c) => c.documents, render: (c) => byKind[c.kind]?.category === "index" ? c.documents.toLocaleString() : <span className="text-muted">Live</span> },
+    { key: "last", label: "Last checked", sort: (c) => c.last_synced_at ?? "", render: (c) => <span className="text-text2">{c.last_synced_at ? ago(c.last_synced_at) : "Never"}</span> },
+    { key: "actions", label: "", className: "w-1", render: (c) => {
+      const live = byKind[c.kind]?.category !== "index";
+      const syncing = c.running || c.status === "syncing";
+      return (
+        <span className="flex justify-end gap-1">
+          <Button size="sm" icon={<RefreshCw className="h-3.5 w-3.5" />} disabled={syncing}
+            onClick={() => act(c, `/api/connections/${c.id}/sync`, "POST", live ? "Connection check started." : "Sync started.")}>{live ? "Test" : "Sync now"}</Button>
+          <OverflowMenu label={`More actions for ${c.name}`} items={[
+            ...(!live ? [{ label: "Full re-sync", onClick: () => act(c, `/api/connections/${c.id}/sync?full=true`, "POST", "Full re-sync started.") }] : []),
+            { label: "Edit access", onClick: () => setAccess(c) },
+            { label: c.enabled ? "Pause" : "Resume", onClick: () => act(c, `/api/connections/${c.id}?enabled=${!c.enabled}`, "PATCH", c.enabled ? `${c.name} paused.` : `${c.name} resumed.`) },
+            { label: "Remove", danger: true, onClick: () => remove(c, live) },
+          ]} />
+        </span>
+      );
+    } },
+  ];
+  const errors = rows.filter((c) => c.status === "error" && c.error);
   return (
-    <main className="mx-auto max-w-5xl space-y-10 px-4 py-6">
-      <div>
-        <h1 className="text-lg font-semibold">Connectors</h1>
-        <p className="mt-1 text-sm text-muted">
-          Connect the places your company&apos;s knowledge lives. Everyone only ever sees results from sources they&apos;re allowed to see.
-        </p>
-      </div>
-      {banner && (
-        <p role="status" className={`rounded-lg border px-3 py-2 text-sm ${banner.ok ? "border-ok/40 bg-ok/10 text-ok" : "border-bad/40 bg-bad/10 text-bad"}`}>{banner.text}</p>
-      )}
-
-      {cat.connections.length > 0 && (
-        <section>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Your connections</h2>
-          <ul className="space-y-2">
-            {cat.connections.map((c) => <ConnectionRow key={c.id} c={c} a={byKind[c.kind]} act={act} onChange={load} />)}
-          </ul>
-        </section>
-      )}
-
-      {adding && <AddForm a={adding} onClose={() => setAdding(null)} onAdded={() => { setAdding(null); setBanner({ ok: true, text: `${adding.label} connected.` }); load(); }} />}
-
-      {GROUPS.map((g) => (
-        <section key={g.category}>
-          <h2 className="font-semibold">{g.title}</h2>
-          <p className="mt-0.5 text-sm text-muted">{g.blurb}</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {cat.available.filter((a) => a.category === g.category).map((a) => (
-              <button key={a.kind} onClick={() => { setAdding(a); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                className="flex items-start gap-3 rounded-lg border border-line bg-panel p-3 text-left hover:border-accent">
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-accent/15 font-mono text-xs text-accent">{ICON[a.kind]}</span>
-                <span className="min-w-0">
-                  <span className="block font-medium">{a.label}</span>
-                  <span className="mt-0.5 line-clamp-2 block text-xs text-muted">{a.blurb}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
+    <>
+      {errors.map((c) => (
+        <div key={c.id} className="flex items-start gap-3 border-b border-line border-l-4 border-l-bad bg-bad-weak/40 px-4 py-2.5 text-sm">
+          <Status kind="error">{c.name}</Status>
+          <span className="min-w-0 flex-1 break-words font-mono text-xs text-text2">{c.error}</span>
+        </div>
       ))}
-      <p className="text-xs text-muted">
-        {cat.interval_minutes > 0 ? `Knowledge sources re-sync every ${cat.interval_minutes} minutes, picking up only what changed.` : "Automatic sync is off (SYNC_INTERVAL_MINUTES=0). Use Sync now."}
-      </p>
-    </main>
+      <SortableTable columns={columns} rows={rows} rowKey={(c) => c.id} empty={empty} />
+      {access && <AccessDialog c={access} onClose={() => setAccess(null)} onSaved={() => { setAccess(null); toast("Access updated."); onChange(); }} />}
+    </>
   );
 }
 
-function ConnectionRow({ c, a, act, onChange }: { c: Connection; a?: Available; act: (p: string, m?: string) => void; onChange: () => void }) {
-  const [editingAccess, setEditingAccess] = useState(false);
-  const live = a && a.category !== "index";
-  const syncing = c.running || c.status === "syncing";
+function OverflowMenu({ label, items }: { label: string; items: { label: string; onClick: () => void; danger?: boolean }[] }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) ref.current.open = false; };
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, []);
   return (
-    <li className="rounded-lg border border-line bg-panel p-3 text-sm">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <span className="grid h-7 w-7 place-items-center rounded bg-accent/15 font-mono text-[10px] text-accent">{ICON[c.kind] ?? "?"}</span>
-        <span className="min-w-0 flex-1">
-          <span className="font-medium">{c.name}</span>
-          {!c.enabled && <span className="ml-2 rounded bg-line px-1.5 py-0.5 text-xs text-muted">paused</span>}
-          <span className="block truncate text-xs text-muted">{[c.account, ...Object.values(c.config)].filter(Boolean).join(" · ")}</span>
-        </span>
-        <span className={syncing ? "animate-pulse text-accent" : c.status === "error" ? "text-bad" : "text-muted"}>
-          {syncing ? (live ? "checking…" : "syncing…") : c.status === "error" ? "needs attention" : live ? "● live" : c.status ?? "never synced"}
-        </span>
-        {!live && <span className="tabular-nums text-muted">{c.documents} docs</span>}
-        <button onClick={() => setEditingAccess(!editingAccess)} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
-          title="Who can see results from this source">
-          {c.allowed ? `🔒 ${c.allowed.length} ${c.allowed.length === 1 ? "person" : "people"}` : "Everyone"}
-        </button>
-        <span className="text-xs text-muted">{c.last_synced_at ? ago(c.last_synced_at) : ""}</span>
-        <span className="flex gap-1">
-          <Btn disabled={syncing} onClick={() => act(`/api/connections/${c.id}/sync`)}>{live ? "Test" : "Sync now"}</Btn>
-          {!live && <Btn disabled={syncing} onClick={() => act(`/api/connections/${c.id}/sync?full=true`)} title="Re-read everything, not just changes">Full</Btn>}
-          <Btn onClick={() => act(`/api/connections/${c.id}?enabled=${!c.enabled}`, "PATCH")}>{c.enabled ? "Pause" : "Resume"}</Btn>
-          <Btn danger onClick={() => confirm(`Remove ${c.name}${live ? "" : ` and its ${c.documents} indexed documents`}? Its stored credentials are deleted too.`) && act(`/api/connections/${c.id}`, "DELETE")}>Remove</Btn>
-        </span>
+    <details ref={ref} className="relative">
+      <summary aria-label={label} title="More actions" className="grid h-7 w-7 cursor-pointer list-none place-items-center rounded text-text2 hover:bg-hover">
+        <MoreHorizontal className="h-4 w-4" />
+      </summary>
+      <ul role="menu" className="absolute right-0 z-20 mt-1 w-44 rounded border border-line bg-panel py-1 shadow-lg">
+        {items.map((it) => (
+          <li key={it.label} role="none">
+            <button role="menuitem" onClick={() => { if (ref.current) ref.current.open = false; it.onClick(); }}
+              className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-hover ${it.danger ? "text-bad" : ""}`}>{it.label}</button>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/* ---------- side panel (drawer) ---------- */
+
+function SidePanel({ title, description, onClose, children, footer }: { title: string; description?: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    ref.current?.showModal(); // native modal: focus trap + Esc
+  }, []);
+  return (
+    <dialog ref={ref} onClose={onClose} className="fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-dvh w-[min(36rem,100vw)] border-l border-line bg-panel p-0 text-foreground">
+      <div className="flex h-full flex-col">
+        <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold">{title}</h2>
+            {description && <p className="mt-0.5 text-sm text-text2">{description}</p>}
+          </div>
+          <button aria-label="Close" onClick={onClose} className="text-muted hover:text-foreground"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <div className="flex justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
       </div>
-      {c.status === "error" && c.error && <p className="mt-2 break-words rounded bg-bad/10 px-2 py-1 font-mono text-xs text-bad">{c.error}</p>}
-      {editingAccess && <AccessEditor initial={c.allowed} onSave={async (allowed) => {
-        const res = await api(`/api/connections/${c.id}/access`, { method: "PUT", body: JSON.stringify({ allowed }) });
-        if (!res.ok) return (await res.json()).detail as string;
-        setEditingAccess(false);
-        onChange();
-      }} />}
-    </li>
+    </dialog>
   );
 }
 
-function AccessEditor({ initial, onSave }: { initial: string[] | null; onSave: (allowed: string[] | null) => Promise<string | void> }) {
-  const [mode, setMode] = useState<"everyone" | "people">(initial ? "people" : "everyone");
-  const [emails, setEmails] = useState((initial ?? []).join(", "));
-  const [err, setErr] = useState("");
+function CatalogPanel({ available, onClose, onPick }: { available: Available[]; onClose: () => void; onPick: (a: Available) => void }) {
   return (
-    <div className="mt-3 space-y-2 border-t border-line pt-3">
-      <AccessFields mode={mode} setMode={setMode} emails={emails} setEmails={setEmails} />
-      {err && <p className="text-xs text-bad">{err}</p>}
-      <button onClick={async () => setErr((await onSave(mode === "everyone" ? null : splitEmails(emails))) || "")}
-        className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-background">Save access</button>
-    </div>
+    <SidePanel title="Add connector" description="Choose where to connect." onClose={onClose}>
+      <div className="space-y-6">
+        {GROUPS.map((g) => (
+          <section key={g.category}>
+            <h3 className="text-sm font-semibold">{g.title}</h3>
+            <p className="mb-2 text-xs text-muted">{g.blurb}</p>
+            <ul className="divide-y divide-line rounded border border-line">
+              {available.filter((a) => a.category === g.category).map((a) => (
+                <li key={a.kind}>
+                  <button onClick={() => onPick(a)} className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-hover">
+                    <g.Icon className="h-4 w-4 shrink-0 text-muted" aria-hidden />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium">{a.label}</span>
+                      <span className="block text-xs text-text2">{a.blurb}</span>
+                    </span>
+                    {a.oauth_ready && <Status kind="info">One-click</Status>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </SidePanel>
   );
 }
 
@@ -162,20 +221,40 @@ const splitEmails = (s: string) => s.split(/[\s,;]+/).map((e) => e.trim()).filte
 
 function AccessFields({ mode, setMode, emails, setEmails }: { mode: string; setMode: (m: "everyone" | "people") => void; emails: string; setEmails: (s: string) => void }) {
   return (
-    <fieldset className="space-y-1.5">
-      <legend className="text-xs font-medium">Who can see results from this source?</legend>
-      <label className="flex items-center gap-2 text-sm"><input type="radio" checked={mode === "everyone"} onChange={() => setMode("everyone")} /> Everyone signed in</label>
-      <label className="flex items-center gap-2 text-sm"><input type="radio" checked={mode === "people"} onChange={() => setMode("people")} /> Only specific people</label>
+    <fieldset className="space-y-2">
+      <legend className="mb-1 text-xs font-medium text-text2">Who can see results from this source</legend>
+      <label className="flex items-center gap-2 text-sm"><input type="radio" checked={mode === "everyone"} onChange={() => setMode("everyone")} className="accent-[var(--accent)]" /> Everyone signed in</label>
+      <label className="flex items-center gap-2 text-sm"><input type="radio" checked={mode === "people"} onChange={() => setMode("people")} className="accent-[var(--accent)]" /> Only specific people</label>
       {mode === "people" && (
-        <textarea value={emails} onChange={(e) => setEmails(e.target.value)} rows={2} placeholder="ana@company.com, bo@company.com"
-          className="w-full rounded-md border border-line bg-background px-2 py-1.5 text-sm outline-none focus:border-accent" />
+        <Field label="Email addresses" helper="Separate with commas.">
+          <textarea value={emails} onChange={(e) => setEmails(e.target.value)} rows={2} placeholder="ana@company.com, bo@company.com"
+            className={`${inputCls} h-auto py-1.5`} />
+        </Field>
       )}
-      <p className="text-xs text-muted">Slack private channels and Drive files also keep their own sharing rules on top of this.</p>
+      <p className="text-xs text-muted">Slack private channels and Google Drive files also keep their own sharing rules.</p>
     </fieldset>
   );
 }
 
-function AddForm({ a, onClose, onAdded }: { a: Available; onClose: () => void; onAdded: () => void }) {
+function AccessDialog({ c, onClose, onSaved }: { c: Connection; onClose: () => void; onSaved: () => void }) {
+  const [mode, setMode] = useState<"everyone" | "people">(c.allowed ? "people" : "everyone");
+  const [emails, setEmails] = useState((c.allowed ?? []).join(", "));
+  const [err, setErr] = useState("");
+  async function save() {
+    const res = await api(`/api/connections/${c.id}/access`, { method: "PUT", body: JSON.stringify({ allowed: mode === "everyone" ? null : splitEmails(emails) }) });
+    if (res.ok) onSaved();
+    else setErr((await res.json()).detail);
+  }
+  return (
+    <SidePanel title={`Access for ${c.name}`} description="Changes apply immediately to search, queries and dashboards." onClose={onClose}
+      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={save}>Save access</Button></>}>
+      <AccessFields mode={mode} setMode={setMode} emails={emails} setEmails={setEmails} />
+      {err && <p className="mt-3 text-sm text-bad">{err}</p>}
+    </SidePanel>
+  );
+}
+
+function AddPanel({ a, onClose, onAdded }: { a: Available; onClose: () => void; onAdded: () => void }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [name, setName] = useState(a.label);
   const [credential, setCredential] = useState("");
@@ -185,14 +264,15 @@ function AddForm({ a, onClose, onAdded }: { a: Available; onClose: () => void; o
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const allowed = mode === "people" ? splitEmails(emails) : null;
+  const formId = `connect-${a.kind}`;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
-    if (mode === "people" && !allowed?.length) return setErr("Add at least one email, or choose Everyone.");
+    if (mode === "people" && !allowed?.length) return setErr("Add at least one email address, or choose Everyone signed in.");
     if (a.oauth_ready && !usePaste) {
       const q = new URLSearchParams({ name, config: JSON.stringify(values), allowed: (allowed ?? []).join(",") });
-      location.href = `${API}/api/oauth/${a.kind}/start?${q}`; // backend records state + PKCE, then sends you to the provider
+      location.href = `${API}/api/oauth/${a.kind}/start?${q}`; // backend records state + PKCE, then redirects to the provider
       return;
     }
     setBusy(true);
@@ -206,89 +286,60 @@ function AddForm({ a, onClose, onAdded }: { a: Available; onClose: () => void; o
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4 rounded-lg border border-accent/50 bg-panel p-4 text-sm">
-      <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-2 font-semibold">
-          <span className="grid h-7 w-7 place-items-center rounded bg-accent/15 font-mono text-[10px] text-accent">{ICON[a.kind]}</span>
-          Connect {a.label}
-        </h2>
-        <button type="button" onClick={onClose} className="text-muted hover:text-foreground" aria-label="Close">✕</button>
-      </div>
-      <p className="text-muted">{a.blurb}</p>
-
-      {a.guide.length > 0 && (usePaste || !a.oauth_ready) && (
-        <details open className="rounded-md border border-line bg-background/50 p-3">
-          <summary className="cursor-pointer text-xs font-medium">Setup guide ({a.guide.length} steps)</summary>
-          <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs text-muted">{a.guide.map((g) => <li key={g}>{g}</li>)}</ol>
-        </details>
-      )}
-
-      <Input label="Name" help="What your team will see, e.g. “Sales Slack” or “Finance warehouse”" value={name} onChange={setName} />
-      {a.config.filter((f) => f.required).map((f) => (
-        <Input key={f.key} label={f.label + " *"} help={f.help} value={values[f.key] ?? ""}
-          onChange={(v) => setValues((p) => ({ ...p, [f.key]: v }))} required />
-      ))}
-
-      {a.paste && usePaste && (
-        <label className="block">
-          <span className="text-xs font-medium">{a.paste.label}{a.paste.optional ? "" : " *"}</span>
-          {a.paste.multiline ? (
-            <textarea value={credential} onChange={(e) => setCredential(e.target.value)} required={!a.paste.optional} rows={5} placeholder={a.paste.placeholder}
-              spellCheck={false} className="mt-1 w-full rounded-md border border-line bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-accent" />
-          ) : (
-            <input type="password" autoComplete="off" value={credential} onChange={(e) => setCredential(e.target.value)} required={!a.paste.optional} placeholder={a.paste.placeholder}
-              className="mt-1 w-full rounded-md border border-line bg-background px-2 py-1.5 font-mono outline-none focus:border-accent" />
-          )}
-          <span className="mt-1 block text-xs text-muted">{a.paste.help}. We check it with {a.label} first, then store it encrypted. It&apos;s never shown again.</span>
-        </label>
-      )}
-
-      {a.config.some((f) => !f.required) && (
-        <details className="rounded-md border border-line p-3">
-          <summary className="cursor-pointer text-xs font-medium">Optional settings</summary>
-          <div className="mt-3 space-y-3">
-            {a.config.filter((f) => !f.required).map((f) => (
-              <Input key={f.key} label={f.label} help={f.help} value={values[f.key] ?? ""} onChange={(v) => setValues((p) => ({ ...p, [f.key]: v }))} />
-            ))}
-          </div>
-        </details>
-      )}
-
-      <AccessFields mode={mode} setMode={setMode} emails={emails} setEmails={setEmails} />
-
-      {err && <p className="rounded bg-bad/10 px-2 py-1 text-bad" role="alert">{err}</p>}
-      <div className="flex flex-wrap items-center gap-3">
-        <button disabled={busy} className="rounded-md bg-accent px-4 py-1.5 font-medium text-background disabled:opacity-50">
-          {a.oauth_ready && !usePaste ? `Continue with ${a.label} →` : busy ? "Checking…" : "Connect"}
-        </button>
+    <SidePanel title={`Connect ${a.label}`} description={a.blurb} onClose={onClose}
+      footer={<>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="primary" type="submit" form={formId} loading={busy}>{a.oauth_ready && !usePaste ? `Continue to ${a.label}` : "Connect"}</Button>
+      </>}>
+      <form id={formId} onSubmit={submit} className="space-y-5">
+        {a.guide.length > 0 && (usePaste || !a.oauth_ready) && (
+          <section className="rounded border border-line bg-nav p-3">
+            <h3 className="text-xs font-semibold">Before you start</h3>
+            <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs text-text2">{a.guide.map((g) => <li key={g}>{g}</li>)}</ol>
+          </section>
+        )}
+        <Field label="Name" helper="What people will see, for example Sales Slack or Finance warehouse.">
+          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
+        </Field>
+        {a.config.filter((f) => f.required).map((f) => (
+          <Field key={f.key} label={f.label} helper={f.help} required>
+            <input value={values[f.key] ?? ""} onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))} required className={inputCls} />
+          </Field>
+        ))}
+        {a.paste && usePaste && (
+          <Field label={a.paste.label} required={!a.paste.optional} helper={`${a.paste.help}. It's verified with ${a.label}, then stored encrypted and never shown again.`}>
+            {a.paste.multiline ? (
+              <textarea value={credential} onChange={(e) => setCredential(e.target.value)} required={!a.paste.optional} rows={5} placeholder={a.paste.placeholder}
+                spellCheck={false} className={`${inputCls} h-auto py-1.5 font-mono text-xs`} />
+            ) : (
+              <input type="password" autoComplete="off" value={credential} onChange={(e) => setCredential(e.target.value)} required={!a.paste.optional}
+                placeholder={a.paste.placeholder} className={`${inputCls} font-mono`} />
+            )}
+          </Field>
+        )}
+        {a.config.some((f) => !f.required) && (
+          <details className="rounded border border-line">
+            <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-text2 hover:bg-hover">Optional settings</summary>
+            <div className="space-y-4 border-t border-line p-3">
+              {a.config.filter((f) => !f.required).map((f) => (
+                <Field key={f.key} label={f.label} helper={f.help}>
+                  <input value={values[f.key] ?? ""} onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))} className={inputCls} />
+                </Field>
+              ))}
+            </div>
+          </details>
+        )}
+        <AccessFields mode={mode} setMode={setMode} emails={emails} setEmails={setEmails} />
         {a.oauth_ready && a.paste && (
-          <button type="button" onClick={() => setUsePaste(!usePaste)} className="text-xs text-muted underline hover:text-foreground">
-            {usePaste ? `Use “Continue with ${a.label}” instead` : "Paste a token instead"}
+          <button type="button" onClick={() => setUsePaste(!usePaste)} className="text-xs text-accent underline">
+            {usePaste ? `Sign in with ${a.label} instead` : "Use a token instead"}
           </button>
         )}
         {a.oauth && !a.oauth_ready && (
-          <span className="text-xs text-muted">Want one-click sign-in for your team? Set up the {a.label} app in <Link href="/settings" className="text-accent underline">Settings</Link>.</span>
+          <p className="text-xs text-muted">For one-click sign-in for your team, set up the {a.label} app in <Link href="/settings" className="text-accent underline">Settings</Link>.</p>
         )}
-      </div>
-    </form>
-  );
-}
-
-function Input({ label, help, value, onChange, required }: { label: string; help?: string; value: string; onChange: (v: string) => void; required?: boolean }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-medium">{label}</span>
-      <input value={value} onChange={(e) => onChange(e.target.value)} required={required}
-        className="mt-1 w-full rounded-md border border-line bg-background px-2 py-1.5 outline-none focus:border-accent" />
-      {help && <span className="mt-1 block text-xs text-muted">{help}</span>}
-    </label>
-  );
-}
-
-function Btn({ children, danger, ...p }: React.ButtonHTMLAttributes<HTMLButtonElement> & { danger?: boolean }) {
-  return (
-    <button {...p} className={`rounded border border-line px-2 py-1 text-xs disabled:opacity-40 ${danger ? "hover:border-bad hover:text-bad" : "hover:border-accent"}`}>
-      {children}
-    </button>
+        {err && <div className="flex items-start gap-2 rounded border border-l-4 border-line border-l-bad bg-panel p-3 text-sm" role="alert"><Status kind="error">Error</Status>{err}</div>}
+      </form>
+    </SidePanel>
   );
 }

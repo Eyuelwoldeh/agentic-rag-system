@@ -175,7 +175,8 @@ def run(question: str, history: list[dict], user_id: int | None = None, email: s
                     ctx.charts.clear()
         if not answer:  # no AI worked (or none configured): still give the most useful answer we can
             why = " ".join(reasons) or ("AI is turned off (AGENT_MODE=search)." if SEARCH_ONLY else "No AI provider is set up.")
-            log.append({"type": "fallback", "message": why})
+            if not reasons:  # provider failures were already logged one by one
+                log.append({"type": "fallback", "message": why})
             yield from drain(_computed_analysis(analyze, why, ctx) if analyze else _search_only(q, why, ctx))
             yield {"type": "sources", "items": ctx.sources}
     except Exception as e:

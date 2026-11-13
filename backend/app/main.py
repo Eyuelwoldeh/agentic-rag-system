@@ -86,14 +86,17 @@ def list_sources(user: User = Depends(current_user)):
             "LEFT JOIN chunks c ON c.document_id = d.id WHERE d.source = 'upload' "
             "AND (d.allowed IS NULL OR %s = ANY(d.allowed)) GROUP BY d.id ORDER BY d.created_at DESC",
             (user.id, user.email)).fetchall()
-        mine = {r[0] for r in conn.execute("SELECT name FROM data_tables WHERE uploaded_by = %s", (user.id,)).fetchall()}
+        meta = {r[0]: (r[1], r[2], r[3]) for r in conn.execute(
+            "SELECT t.name, t.uploaded_by = %s, t.row_count, t.updated_at FROM data_tables t", (user.id,)).fetchall()}
+        mine = {n for n, (m, _, _) in meta.items() if m}
     schemas = datasources.list_tables(datasources.UPLOADS, user.email)
     titles = tableacl.visible_tables(user.email)
     return {
         "documents": [{"id": r[0], "name": r[1], "chunks": r[2], "created_at": r[3], "mine": r[4], "private": r[5]}
                       for r in docs],
         "tables": [{"name": t, "title": titles[t]["title"], "source": titles[t]["source"], "private": titles[t]["restricted"],
-                    "mine": t in mine, "columns": cols} for t, cols in schemas.items() if t in titles],
+                    "mine": t in mine, "columns": cols, "rows": meta.get(t, (None, None, None))[1],
+                    "updated_at": meta.get(t, (None, None, None))[2]} for t, cols in schemas.items() if t in titles],
     }
 
 

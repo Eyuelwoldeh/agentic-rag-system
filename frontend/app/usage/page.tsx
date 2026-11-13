@@ -1,89 +1,91 @@
 "use client";
 
+import { CircleCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import Chart, { fmt } from "@/components/Chart";
+import SortableTable, { type Column } from "@/components/SortableTable";
+import { EmptyState, Page, PageHeader, Panel, Skeleton, Status, useUI } from "@/components/ui";
 import { apiJson } from "@/lib/api";
 import { ago } from "@/lib/time";
 
-type Insights = {
+type Gap = { id: number; question: string; created_at: string; user: string | null; reason: string; note: string | null };
+type Usage = {
   days: number; questions: number; active_users: number; verified_rate: number | null; thumbs_up: number; thumbs_down: number;
-  median_latency_ms: number; estimated_cost_usd: number; daily: { day: string; questions: number }[];
-  gaps: { id: number; question: string; created_at: string; user: string | null; reason: string; note: string | null }[];
+  median_latency_ms: number; estimated_cost_usd: number; daily: { day: string; questions: number }[]; gaps: Gap[];
 };
 
-const REASON_HELP: Record<string, string> = {
-  "thumbs down": "Someone marked the answer as bad",
-  "nothing found": "No document matched; the knowledge may be missing",
-  "not verified": "The fact-checker couldn't confirm every claim",
+const REASON: Record<string, { label: string; help: string }> = {
+  "thumbs down": { label: "Marked not helpful", help: "Someone rated the answer as not helpful" },
+  "nothing found": { label: "Nothing found", help: "No document matched; the information may be missing" },
+  "not verified": { label: "Not verified", help: "The fact-check couldn't confirm every claim" },
 };
 
 export default function UsagePage() {
+  const { toast } = useUI();
   const [days, setDays] = useState(30);
-  const [d, setD] = useState<Insights | null>(null);
-  const [error, setError] = useState("");
+  const [d, setD] = useState<Usage | null>(null);
   useEffect(() => {
-    apiJson<Insights>(`/api/insights?days=${days}`).then(setD).catch((e) => setError(e.message));
-  }, [days]);
+    setD(null);
+    apiJson<Usage>(`/api/insights?days=${days}`).then(setD).catch((e) => toast(e.message, "error"));
+  }, [days, toast]);
 
-  if (error) return <p className="p-6 text-bad">{error}</p>;
-  if (!d) return <p className="p-6 text-sm text-muted">Loading…</p>;
-
-  const stats: [string, string, string?][] = [
-    ["Questions asked", fmt(d.questions)],
+  const stats: [string, string, string?][] = d ? [
+    ["Questions", fmt(d.questions)],
     ["Active people", fmt(d.active_users)],
-    ["Verified answers", d.verified_rate == null ? "–" : `${Math.round(d.verified_rate * 100)}%`, "Share of answers the fact-checker fully confirmed"],
-    ["Helpful / not helpful", `${d.thumbs_up} / ${d.thumbs_down}`],
-    ["Typical answer time", `${(d.median_latency_ms / 1000).toFixed(1)}s`, "Median"],
-    ["Estimated AI cost", `$${d.estimated_cost_usd.toFixed(2)}`, "Token usage × list price of the main model. Dashboards cost nothing to refresh."],
+    ["Verified answers", d.verified_rate == null ? "No data" : `${Math.round(d.verified_rate * 100)}%`, "Share of answers the fact-check fully confirmed"],
+    ["Rated helpful", `${d.thumbs_up} of ${d.thumbs_up + d.thumbs_down}`],
+    ["Median response time", `${(d.median_latency_ms / 1000).toFixed(1)} s`],
+    ["Estimated AI cost", `$${d.estimated_cost_usd.toFixed(2)}`, "Tokens × list price for models with known pricing. Dashboard refreshes cost nothing."],
+  ] : [];
+
+  const gapCols: Column<Gap>[] = [
+    { key: "q", label: "Question", sort: (g) => g.question.toLowerCase(), render: (g) => (
+      <span className="block max-w-xl">
+        <span className="block">{g.question}</span>
+        {g.note && <span className="block text-xs text-muted">Feedback: {g.note}</span>}
+      </span>
+    ) },
+    { key: "reason", label: "Reason", sort: (g) => g.reason, render: (g) => <Status kind="warning" title={REASON[g.reason]?.help}>{REASON[g.reason]?.label ?? g.reason}</Status> },
+    { key: "user", label: "Asked by", sort: (g) => g.user ?? "", render: (g) => <span className="text-text2">{g.user ?? "Unknown"}</span> },
+    { key: "when", label: "When", sort: (g) => g.created_at, render: (g) => <span className="text-text2">{ago(g.created_at)}</span> },
   ];
 
   return (
-    <main className="mx-auto max-w-5xl space-y-8 px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold">Usage</h1>
-          <p className="mt-1 text-sm text-muted">How your team uses the assistant, and where your knowledge base has gaps.</p>
+    <>
+      <PageHeader title="Usage" description="How your organization uses the assistant, and which questions it couldn't answer well."
+        actions={
+          <label className="flex items-center gap-2 text-xs text-text2">
+            Period
+            <select value={days} onChange={(e) => setDays(+e.target.value)} className="h-8 rounded border border-line bg-panel px-2 text-sm text-foreground">
+              <option value={7}>Last 7 days</option>
+              <option value={30}>Last 30 days</option>
+              <option value={90}>Last 90 days</option>
+            </select>
+          </label>
+        } />
+      <Page>
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded border border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
+          {(d ? stats : Array.from({ length: 6 }, () => ["", ""] as [string, string])).map(([label, value, help], i) => (
+            <div key={label || i} className="bg-panel p-4" title={help}>
+              {d ? <>
+                <div className="text-xs text-text2">{label}</div>
+                <div className="mt-1 text-2xl leading-8 tabular-nums">{value}</div>
+              </> : <Skeleton className="h-12" />}
+            </div>
+          ))}
         </div>
-        <select value={days} onChange={(e) => setDays(+e.target.value)} className="rounded-md border border-line bg-panel px-2 py-1 text-sm" aria-label="Time range">
-          <option value={7}>Last 7 days</option>
-          <option value={30}>Last 30 days</option>
-          <option value={90}>Last 90 days</option>
-        </select>
-      </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {stats.map(([label, value, help]) => (
-          <div key={label} className="rounded-lg border border-line bg-panel p-3" title={help}>
-            <div className="text-xs text-muted">{label}</div>
-            <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
-          </div>
-        ))}
-      </div>
-
-      {d.daily.length > 1 && (
-        <Chart data={{ title: "Questions per day", spec: { type: "bar", x: "day", y: ["questions"] }, columns: ["day", "questions"], rows: d.daily.map((r) => [r.day.slice(5), r.questions]) }} />
-      )}
-
-      <section>
-        <h2 className="font-semibold">Knowledge gaps</h2>
-        <p className="mt-1 text-sm text-muted">Questions the assistant couldn&apos;t answer well. Adding or updating the right document usually fixes them.</p>
-        {d.gaps.length === 0 ? (
-          <p className="mt-3 rounded-lg border border-line bg-panel p-4 text-sm text-muted">No gaps in this period. 🎉</p>
-        ) : (
-          <ul className="mt-3 divide-y divide-line rounded-lg border border-line bg-panel text-sm">
-            {d.gaps.map((g) => (
-              <li key={g.id} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-3 py-2">
-                <span className="min-w-0 flex-1">
-                  {g.question}
-                  {g.note && <span className="block text-xs text-muted">“{g.note}”</span>}
-                </span>
-                <span className="rounded-full bg-warn/15 px-2 py-0.5 text-xs text-warn" title={REASON_HELP[g.reason]}>{g.reason}</span>
-                <span className="text-xs text-muted">{g.user ?? "unknown"} · {ago(g.created_at)}</span>
-              </li>
-            ))}
-          </ul>
+        {d && d.daily.length > 1 && (
+          <Chart data={{ title: "Questions per day", spec: { type: "bar", x: "day", y: ["questions"] }, columns: ["day", "questions"], rows: d.daily.map((r) => [r.day.slice(5), r.questions]) }} />
         )}
-      </section>
-    </main>
+
+        <Panel title="Knowledge gaps" description="Questions the assistant couldn't answer well. Adding or updating the right document usually resolves them." flush>
+          {!d ? <div className="p-4"><Skeleton className="h-8" /></div> : (
+            <SortableTable columns={gapCols} rows={d.gaps} rowKey={(g) => g.id} initialSort={{ key: "when", dir: -1 }}
+              empty={<EmptyState icon={<CircleCheck className="h-6 w-6" />} title="No gaps in this period" body="Every question was answered and verified, and nothing was rated unhelpful." />} />
+          )}
+        </Panel>
+      </Page>
+    </>
   );
 }

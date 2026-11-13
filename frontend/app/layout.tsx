@@ -1,22 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { UIProvider } from "@/components/ui";
 import { MeProvider } from "@/lib/me";
-import Nav from "./nav";
+import Shell from "./nav";
 import "./globals.css";
 
-const sans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const mono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+const sans = IBM_Plex_Sans({ variable: "--font-plex-sans", subsets: ["latin"], weight: ["400", "500", "600"] });
+const mono = IBM_Plex_Mono({ variable: "--font-plex-mono", subsets: ["latin"], weight: ["400", "500"] });
 
-export const metadata: Metadata = { title: "Agentic RAG", description: "Grounded answers over your documents, data and the web" };
+export const metadata: Metadata = { title: "Agentic RAG", description: "Company knowledge and analytics assistant" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
       <body className={`${sans.variable} ${mono.variable} antialiased`}>
-        <MeProvider>
-          <Nav />
-          {children}
-        </MeProvider>
+        <UIProvider>
+          <MeProvider>
+            <Shell>{children}</Shell>
+          </MeProvider>
+        </UIProvider>
       </body>
     </html>
   );

@@ -48,6 +48,7 @@ def test_excel_every_tab_with_types(users):
     by_title = {t["title"]: t for t in out}
     assert set(by_title) == {"sheet-forecast.xlsx › Sales", "sheet-forecast.xlsx › Targets"}
     sales = by_title["sheet-forecast.xlsx › Sales"]
+    assert sales["table"] == "sheet_forecast_sales" and by_title["sheet-forecast.xlsx › Targets"]["table"] == "sheet_forecast_targets"
     assert sales["columns"] == {"month": "date", "region": "text", "revenue": "double precision", "zip": "text"}
     assert sales["rows"] == 2  # trailing empty row dropped
     r = q("sheet-bo@acme.test", f"SELECT date_trunc('month', month)::date AS m, sum(revenue) AS rev FROM {sales['table']} GROUP BY 1 ORDER BY 1")

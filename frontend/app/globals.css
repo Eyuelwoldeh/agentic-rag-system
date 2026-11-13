@@ -1,39 +1,62 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens. Conventions follow established enterprise systems:
+ * 4px spacing base (Fluent), 14px productive body / 12px labels (Carbon type set),
+ * neutral canvas + white surfaces + one brand blue, status = color + icon + label (Carbon status pattern).
+ */
 :root {
-  --background: #fafaf9;
-  --foreground: #1c1917;
-  --panel: #ffffff;
-  --line: #e7e5e4;
-  --muted: #78716c;
-  --accent: #0f766e;
-  --ok: #15803d;
-  --warn: #b45309;
-  --bad: #b91c1c;
+  --background: #f4f5f7;   /* app canvas */
+  --panel: #ffffff;        /* surfaces: tables, forms, cards */
+  --nav: #fafbfc;          /* side navigation */
+  --foreground: #172b4d;   /* primary text */
+  --text-2: #44546f;       /* secondary text */
+  --muted: #626f86;        /* helper text, captions */
+  --line: #dcdfe4;         /* borders, dividers */
+  --hover: #f1f2f4;        /* row / item hover */
+  --accent: #0c66e4;       /* brand + primary actions + links */
+  --accent-hover: #0055cc;
+  --accent-weak: #e9f2ff;  /* selected nav item, info backgrounds */
+  --ok: #1f845a;
+  --ok-weak: #dcfff1;
+  --warn: #a54800;
+  --warn-weak: #fff7d6;
+  --bad: #c9372c;
+  --bad-weak: #ffeceb;
+  --focus: #388bff;
   /* chart series: validated categorical slots 1-4 (adjacent CVD ΔE ≥ 9.1 on #fff) */
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-4: #eda100;
-  --grid: #ecebe9;
+  --grid: #ebecf0;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0c0a09;
-    --foreground: #f5f5f4;
-    --panel: #1c1917;
-    --line: #292524;
-    --muted: #a8a29e;
-    --accent: #2dd4bf;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-    --bad: #f87171;
+    --background: #161a1d;
+    --panel: #1d2125;
+    --nav: #1a1e21;
+    --foreground: #dee4ea;
+    --text-2: #b6c2cf;
+    --muted: #8c9bab;
+    --line: #2c333a;
+    --hover: #22272b;
+    --accent: #579dff;
+    --accent-hover: #85b8ff;
+    --accent-weak: #1c2b41;
+    --ok: #4bce97;
+    --ok-weak: #1c3329;
+    --warn: #f5cd47;
+    --warn-weak: #332e1b;
+    --bad: #f87168;
+    --bad-weak: #42221f;
+    --focus: #85b8ff;
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
-    --grid: #2e2a27;
+    --grid: #2c333a;
   }
 }
 
@@ -41,30 +64,109 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-panel: var(--panel);
+  --color-nav: var(--nav);
+  --color-text2: var(--text-2);
   --color-line: var(--line);
   --color-muted: var(--muted);
+  --color-hover: var(--hover);
   --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-weak: var(--accent-weak);
   --color-ok: var(--ok);
+  --color-ok-weak: var(--ok-weak);
   --color-warn: var(--warn);
+  --color-warn-weak: var(--warn-weak);
   --color-bad: var(--bad);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bad-weak: var(--bad-weak);
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
+  --radius-DEFAULT: 4px;
+}
+
+html {
+  font-size: 16px;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.16px;
+  font-feature-settings: "tnum" 0;
 }
 
-/* minimal markdown styling for answers */
+/* visible, consistent keyboard focus everywhere */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: var(--accent-weak);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* data tables (Carbon: 40px default rows, header matches, hover on every row, numbers right-aligned) */
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+}
+.data-table th {
+  height: 40px;
+  padding: 0 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--nav);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.data-table td {
+  height: 40px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.data-table tbody tr:hover td {
+  background: var(--hover);
+}
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.data-table .num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* answer body typography */
 .md > * + * { margin-top: 0.75em; }
 .md h1, .md h2, .md h3 { font-weight: 600; }
+.md h1 { font-size: 20px; line-height: 28px; }
+.md h2 { font-size: 16px; line-height: 24px; }
 .md ul { list-style: disc; padding-left: 1.25em; }
 .md ol { list-style: decimal; padding-left: 1.25em; }
+.md li + li { margin-top: 0.25em; }
 .md a { color: var(--accent); text-decoration: underline; }
-.md code { font-family: var(--font-mono); font-size: 0.875em; background: var(--line); padding: 0.1em 0.3em; border-radius: 4px; }
-.md pre { background: var(--line); padding: 0.75em; border-radius: 6px; overflow-x: auto; }
+.md code { font-family: var(--font-mono); font-size: 12px; background: var(--hover); padding: 1px 4px; border-radius: 3px; }
+.md pre { background: var(--hover); padding: 12px; border-radius: 4px; overflow-x: auto; }
 .md pre code { background: none; padding: 0; }
-.md table { border-collapse: collapse; }
-.md th, .md td { border: 1px solid var(--line); padding: 0.25em 0.5em; }
+.md table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.md th, .md td { border: 1px solid var(--line); padding: 4px 8px; }
+.md blockquote { border-left: 3px solid var(--line); padding-left: 12px; color: var(--text-2); }
+
+/* native <dialog> backdrop */
+dialog::backdrop {
+  background: rgb(9 30 66 / 0.54);
+}

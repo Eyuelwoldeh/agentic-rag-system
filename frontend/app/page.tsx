@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronRight, Copy, ExternalLink, FileText, MessageSquarePlus, Search, ThumbsDown, ThumbsUp } from "lucide-react";
 import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import Chart, { type ChartData } from "@/components/Chart";
+import { Button, Status, useUI } from "@/components/ui";
 import { api, apiJson, streamChat, type AgentEvent, type Source } from "@/lib/api";
 import { useMe } from "@/lib/me";
 
@@ -13,23 +15,16 @@ type Done = Extract<AgentEvent, { type: "done" }>;
 type Assistant = { role: "assistant"; content: string; steps: Step[]; sources: Source[]; charts: ChartEvent[]; done?: Done; pending: boolean };
 type Msg = { role: "user"; content: string } | Assistant;
 type Home = { checklist: { id: string; label: string; done: boolean }[]; suggestions: string[]; ai: string[] };
-type Sheet = { name: string; title: string; source: string; private: boolean; mine: boolean; columns: Record<string, string> };
-type Library = { documents: { id: number; name: string; chunks: number; mine: boolean; private: boolean }[]; tables: Sheet[] };
 
-export default function Chat() {
+export default function Ask() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [home, setHome] = useState<Home | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  const started = useRef(false);
 
   const loadHome = useCallback(() => apiJson<Home>("/api/home").then(setHome).catch(() => {}), []);
-  useEffect(() => {
-    loadHome();
-  }, [loadHome]);
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" }); // braces: newer Chrome returns a Promise here
-  }, [msgs]);
 
   function patchLast(fn: (m: Assistant) => Partial<Assistant>) {
     setMsgs((prev) => {
@@ -39,15 +34,15 @@ export default function Chat() {
     });
   }
 
-  async function ask(question: string, analyze?: string) {
+  const ask = useCallback(async (question: string, analyze?: string, history: Msg[] = []) => {
     question = question.trim();
-    if (!question || busy) return;
-    const history = msgs.filter((m) => m.content).map((m) => ({ role: m.role, content: m.content })).slice(-20);
+    if (!question) return;
+    const hist = history.filter((m) => m.content).map((m) => ({ role: m.role, content: m.content })).slice(-20);
     setInput("");
     setBusy(true);
     setMsgs((p) => [...p, { role: "user", content: question }, { role: "assistant", content: "", steps: [], sources: [], charts: [], pending: true }]);
     try {
-      for await (const ev of streamChat(question, history, analyze)) {
+      for await (const ev of streamChat(question, hist, analyze)) {
         if (ev.type === "text") patchLast((m) => ({ content: m.content + ev.text }));
         else if (ev.type === "sources") patchLast(() => ({ sources: ev.items }));
         else if (ev.type === "done") patchLast(() => ({ done: ev, content: ev.answer || "", pending: false }));
@@ -55,8 +50,7 @@ export default function Chat() {
         else if (ev.type === "chart") {
           const c = ev.chart;
           patchLast((m) => ({ charts: [...m.charts, { ...c, spec: { type: c.type, x: c.x, y: c.y } }] }));
-        }
-        else if (ev.type === "thinking")
+        } else if (ev.type === "thinking")
           patchLast((m) => {
             const last = m.steps[m.steps.length - 1];
             if (last?.type === "thinking") return { steps: [...m.steps.slice(0, -1), { ...last, text: last.text + ev.text }] };
@@ -71,229 +65,260 @@ export default function Chat() {
       setBusy(false);
       loadHome();
     }
-  }
+  }, [loadHome]);
+
+  useEffect(() => {
+    loadHome();
+    // "Analyze" from the Library arrives as ?analyze=<table>&title=<name>
+    const q = new URLSearchParams(location.search);
+    const table = q.get("analyze");
+    if (table && !started.current) {
+      started.current = true;
+      history.replaceState(null, "", "/");
+      ask(`Analyze “${q.get("title") ?? table}” and give me the key business insights.`, table);
+    }
+  }, [loadHome, ask]);
+
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: "smooth" }); // braces: newer Chrome returns a Promise here
+  }, [msgs]);
+
+  const submit = () => !busy && ask(input, undefined, msgs);
 
   return (
-    <div className="flex h-[calc(100dvh-3rem)] flex-col md:flex-row">
-      <Sidebar onChange={loadHome} onAnalyze={(s) => ask(`Analyze “${s.title}” and give me the key business insights.`, s.name)} busy={busy} />
-      <main className="flex min-w-0 flex-1 flex-col">
-        <div className="flex-1 overflow-y-auto px-4 py-6">
-          <div className="mx-auto max-w-3xl space-y-6">
-            {home && home.ai.length === 0 && <NoAIBanner />}
-            {msgs.length === 0 && <Welcome home={home} onAsk={(q) => ask(q)} />}
-            {msgs.map((m, i) => (m.role === "user" ? <UserBubble key={i} text={m.content} /> : <AssistantMsg key={i} m={m} />))}
-            <div ref={bottom} />
-          </div>
+    <div className="flex h-dvh flex-col md:h-dvh">
+      <header className="flex items-center justify-between gap-4 border-b border-line bg-panel px-6 py-3">
+        <div>
+          <h1 className="text-base font-semibold">Ask</h1>
+          <p className="text-xs text-muted">Answers use only the documents, data and apps you have access to.</p>
         </div>
-        <form onSubmit={(e) => { e.preventDefault(); ask(input); }} className="border-t border-line p-4">
-          <div className="mx-auto flex max-w-3xl items-end gap-2">
-            <textarea
-              value={input}
-              rows={1}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  ask(input);
-                }
-              }}
-              placeholder="Ask about your docs, your data, or the web…"
-              aria-label="Question"
-              className="max-h-40 flex-1 resize-none rounded-lg border border-line bg-panel px-3 py-2 outline-none focus:border-accent"
-            />
-            <button disabled={busy || !input.trim()} className="rounded-lg bg-accent px-4 py-2 font-medium text-background disabled:opacity-40">
-              {busy ? "Working…" : "Ask"}
-            </button>
-          </div>
-          <p className="mx-auto mt-1.5 max-w-3xl text-xs text-muted">Enter to send · Shift+Enter for a new line · answers only use sources you have access to</p>
-        </form>
-      </main>
+        {msgs.length > 0 && (
+          <Button icon={<MessageSquarePlus className="h-4 w-4" />} onClick={() => setMsgs([])} disabled={busy}>New conversation</Button>
+        )}
+      </header>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl space-y-6 px-6 py-6">
+          {home && home.ai.length === 0 && <NoAINotice />}
+          {msgs.length === 0 && <Start home={home} onAsk={(q) => ask(q)} />}
+          {msgs.map((m, i) => (m.role === "user" ? <Question key={i} text={m.content} /> : <AnswerView key={i} m={m} />))}
+          <div ref={bottom} />
+        </div>
+      </div>
+
+      <form onSubmit={(e) => { e.preventDefault(); submit(); }} className="border-t border-line bg-panel px-6 py-3">
+        <div className="mx-auto flex max-w-3xl items-end gap-2">
+          <label className="sr-only" htmlFor="question">Question</label>
+          <textarea id="question" value={input} rows={2} onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
+            placeholder="Ask a question about your documents, data or connected apps"
+            className="max-h-40 min-h-[52px] flex-1 resize-none rounded border border-line bg-panel px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent focus:ring-1 focus:ring-accent" />
+          <Button type="submit" variant="primary" loading={busy} disabled={!input.trim()} className="h-[52px] px-5">Ask</Button>
+        </div>
+        <p className="mx-auto mt-1 max-w-3xl text-xs text-muted">Press Enter to send, Shift+Enter for a new line.</p>
+      </form>
     </div>
   );
 }
 
-function Welcome({ home, onAsk }: { home: Home | null; onAsk: (q: string) => void }) {
-  const [hidden, setHidden] = useState(() => {
-    try {
-      return localStorage.getItem("hide-checklist") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const remaining = home?.checklist.filter((c) => !c.done).length ?? 0;
+function NoAINotice() {
+  const me = useMe()!;
   return (
-    <div className="space-y-6 pt-10">
-      <div className="text-center">
-        <h1 className="text-xl font-semibold">What do you want to know?</h1>
-        <p className="mt-1 text-sm text-muted">I search your documents and connected apps, query your data, and check every answer before marking it verified.</p>
-      </div>
+    <div className="flex items-start gap-3 rounded border border-line border-l-4 border-l-warn bg-panel p-3 text-sm">
+      <Status kind="warning">No AI model</Status>
+      <p className="text-text2">
+        Answers will be search results and calculated spreadsheet findings, without written explanations.{" "}
+        {me.role === "admin" ? <Link href="/settings" className="text-accent underline">Connect Claude or ChatGPT in Settings</Link> : "Ask an administrator to connect an AI model."}
+      </p>
+    </div>
+  );
+}
 
-      {home && home.suggestions.length > 0 && (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {home.suggestions.map((s) => (
-            <button key={s} onClick={() => onAsk(s)} className="rounded-lg border border-line bg-panel px-3 py-2 text-left text-sm hover:border-accent">
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {home && remaining > 0 && !hidden && (
-        <section className="rounded-lg border border-line bg-panel p-4 text-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="font-medium">Getting started</h2>
-            <button onClick={() => { setHidden(true); try { localStorage.setItem("hide-checklist", "1"); } catch {} }} className="text-xs text-muted hover:text-foreground">
-              Hide
-            </button>
-          </div>
-          <ol className="space-y-1.5">
-            {home.checklist.map((c) => (
-              <li key={c.id} className={`flex items-center gap-2 ${c.done ? "text-muted line-through" : ""}`}>
-                <span className={`grid h-4 w-4 shrink-0 place-items-center rounded-full border text-[10px] ${c.done ? "border-ok bg-ok text-background" : "border-line"}`}>{c.done ? "✓" : ""}</span>
-                {c.label}
+function Start({ home, onAsk }: { home: Home | null; onAsk: (q: string) => void }) {
+  const remaining = home?.checklist.filter((c) => !c.done) ?? [];
+  return (
+    <div className="space-y-6">
+      <section className="rounded border border-line bg-panel">
+        <h2 className="border-b border-line px-4 py-3 text-sm font-semibold">Suggested questions</h2>
+        {home && home.suggestions.length > 0 ? (
+          <ul>
+            {home.suggestions.map((s) => (
+              <li key={s} className="border-b border-line last:border-0">
+                <button onClick={() => onAsk(s)} className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-hover">
+                  <Search className="h-4 w-4 shrink-0 text-muted" aria-hidden />
+                  <span className="flex-1">{s}</span>
+                  <ChevronRight className="h-4 w-4 text-muted" aria-hidden />
+                </button>
               </li>
             ))}
-          </ol>
+          </ul>
+        ) : (
+          <p className="px-4 py-3 text-sm text-text2">
+            Add documents or spreadsheets in the <Link href="/library" className="text-accent underline">Library</Link> to get suggestions based on your data.
+          </p>
+        )}
+      </section>
+
+      {remaining.length > 0 && home && (
+        <section className="rounded border border-line bg-panel">
+          <h2 className="border-b border-line px-4 py-3 text-sm font-semibold">Set up your workspace</h2>
+          <ul className="divide-y divide-line">
+            {home.checklist.map((c) => (
+              <li key={c.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                {c.done ? <Status kind="success">Done</Status> : <Status kind="neutral">To do</Status>}
+                <span className={c.done ? "text-muted" : ""}>{c.label}</span>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
     </div>
   );
 }
 
-function NoAIBanner() {
-  const me = useMe()!;
+function Question({ text }: { text: string }) {
   return (
-    <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm">
-      <b>No AI model connected.</b> You&apos;ll get search results and calculated spreadsheet insights, but not written answers.{" "}
-      {me.role === "admin" ? <>Add a Claude or ChatGPT key in <Link href="/settings" className="underline">Settings → AI model</Link>.</> : "Ask an admin to connect one."}
-    </p>
-  );
-}
-
-function UserBubble({ text }: { text: string }) {
-  return (
-    <div className="flex justify-end">
-      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-accent/10 px-4 py-2">{text}</div>
+    <div className="border-l-2 border-line pl-4">
+      <p className="text-xs font-medium text-muted">Question</p>
+      <p className="mt-0.5 whitespace-pre-wrap text-sm font-medium">{text}</p>
     </div>
   );
 }
 
-function AssistantMsg({ m }: { m: Assistant }) {
+function AnswerView({ m }: { m: Assistant }) {
   const critic = [...m.steps].reverse().find((s) => s.type === "critic");
   return (
-    <div className="space-y-3">
-      {m.steps.length > 0 && <Trace steps={m.steps} pending={m.pending} />}
-      {m.charts.map((c) => <Chart key={c.id} data={c} action={<PinButton chart={c} />} />)}
-      {m.content && <div className="md leading-relaxed"><ReactMarkdown>{m.content}</ReactMarkdown></div>}
-      {m.pending && !m.content && <p className="animate-pulse text-sm text-muted">Working on it…</p>}
+    <article className="rounded border border-line bg-panel">
+      <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
+        <h2 className="text-sm font-semibold">Answer</h2>
+        {m.pending ? <Status kind="running">Working</Status>
+          : m.done?.verified ? <Status kind="success" title="A second AI checked every claim against the sources">Verified</Status>
+          : critic && critic.type === "critic" ? <Status kind="warning" title={critic.feedback}>Not fully verified</Status> : null}
+        {m.done && (
+          <div className="ml-auto flex items-center gap-1">
+            <span className="mr-2 text-xs text-muted tabular-nums">{(m.done.latency_ms / 1000).toFixed(1)} s</span>
+            <CopyButton text={m.content} />
+            <Feedback runId={m.done.run_id} />
+          </div>
+        )}
+      </header>
+
+      <div className="space-y-4 px-4 py-4">
+        {m.content ? <div className="md text-sm leading-6"><ReactMarkdown>{m.content}</ReactMarkdown></div>
+          : m.pending && <p className="text-sm text-muted">Searching sources and preparing the answer…</p>}
+        {m.charts.map((c) => <Chart key={c.id} data={c} action={<PinButton chart={c} />} />)}
+      </div>
+
       {m.sources.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {m.sources.map((s) => <SourceChip key={s.label} s={s} />)}
-        </div>
+        <section className="border-t border-line px-4 py-3">
+          <h3 className="mb-2 text-xs font-semibold text-text2">Sources</h3>
+          <ol className="space-y-1">
+            {m.sources.map((s) => <SourceRow key={s.label} s={s} />)}
+          </ol>
+        </section>
       )}
-      {m.done && (
-        <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-          {m.done.verified ? (
-            <span className="rounded-full bg-ok/15 px-2 py-0.5 font-medium text-ok" title="A second AI checked every claim against the sources">✓ Verified</span>
-          ) : critic && critic.type === "critic" ? (
-            <span className="rounded-full bg-warn/15 px-2 py-0.5 font-medium text-warn" title={critic.feedback}>⚠ Not fully verified: hover for why</span>
-          ) : null}
-          <span>{(m.done.latency_ms / 1000).toFixed(1)}s</span>
-          <CopyButton text={m.content} />
-          <Feedback runId={m.done.run_id} />
-        </div>
-      )}
-    </div>
+      {m.steps.length > 0 && <Trace steps={m.steps} pending={m.pending} />}
+    </article>
   );
 }
 
 function PinButton({ chart }: { chart: ChartEvent }) {
-  const [state, setState] = useState<"idle" | "saving" | "pinned" | "error">("idle");
+  const { toast } = useUI();
+  const [state, setState] = useState<"idle" | "saving" | "pinned">("idle");
   async function pin() {
     setState("saving");
-    const res = await api("/api/dashboard/tiles", {
-      method: "POST",
-      body: JSON.stringify({ title: chart.title, ...chart.spec, source: chart.source, sql: chart.sql }),
-    });
-    setState(res.ok ? "pinned" : "error");
+    const res = await api("/api/dashboard/tiles", { method: "POST", body: JSON.stringify({ title: chart.title, ...chart.spec, source: chart.source, sql: chart.sql }) });
+    if (res.ok) {
+      setState("pinned");
+      toast(`Pinned “${chart.title}” to your dashboard.`);
+    } else {
+      setState("idle");
+      toast((await res.json()).detail ?? "Couldn't pin the chart.", "error");
+    }
   }
   return (
-    <button onClick={pin} disabled={state === "saving" || state === "pinned"} className="rounded bg-accent px-2 py-0.5 font-medium text-background disabled:opacity-60" title="Add to your dashboard. It re-runs the query each time, so it stays current.">
-      {state === "pinned" ? "Pinned ✓" : state === "error" ? "Retry pin" : "Pin to dashboard"}
-    </button>
+    <Button size="sm" variant={state === "pinned" ? "secondary" : "primary"} onClick={pin} loading={state === "saving"} disabled={state === "pinned"}
+      title="Add to your dashboard. It re-runs the query each time, so it stays current.">
+      {state === "pinned" ? "Pinned" : "Pin to dashboard"}
+    </Button>
   );
 }
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+  const { toast } = useUI();
   return (
-    <button onClick={() => navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })} className="hover:text-foreground">
-      {copied ? "Copied" : "Copy"}
+    <button aria-label="Copy answer" title="Copy answer" className="rounded p-1.5 text-muted hover:bg-hover hover:text-foreground"
+      onClick={() => navigator.clipboard.writeText(text).then(() => toast("Answer copied."))}>
+      <Copy className="h-4 w-4" />
     </button>
   );
 }
 
 function Feedback({ runId }: { runId: number }) {
+  const { prompt, toast } = useUI();
   const [value, setValue] = useState<number | null>(null);
-  const [note, setNote] = useState("");
-  const [sent, setSent] = useState(false);
-  async function send(v: number, n = "") {
+  async function send(v: number) {
+    let note = "";
+    if (v === -1) {
+      const n = await prompt({ title: "What was wrong with this answer?", action: "Send feedback", input: { label: "Details (optional)", value: "" },
+        body: "Your feedback appears in the Usage page so administrators can fix missing or outdated information." });
+      note = n ?? "";
+    }
     setValue(v);
-    await api(`/api/runs/${runId}/feedback`, { method: "POST", body: JSON.stringify({ value: v, note: n }) });
-    if (n || v === 1) setSent(true);
+    await api(`/api/runs/${runId}/feedback`, { method: "POST", body: JSON.stringify({ value: v, note }) });
+    toast("Thanks. Your feedback was recorded.");
   }
-  if (sent) return <span>Thanks for the feedback</span>;
   return (
-    <span className="flex items-center gap-1">
-      <button aria-label="Good answer" onClick={() => send(1)} className={`rounded px-1 ${value === 1 ? "text-ok" : "hover:text-foreground"}`}>👍</button>
-      <button aria-label="Bad answer" onClick={() => send(-1)} className={`rounded px-1 ${value === -1 ? "text-bad" : "hover:text-foreground"}`}>👎</button>
-      {value === -1 && (
-        <form onSubmit={(e) => { e.preventDefault(); send(-1, note); }} className="flex gap-1">
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was wrong? (optional)" className="w-48 rounded border border-line bg-background px-1.5 py-0.5" />
-          <button className="hover:text-foreground">Send</button>
-        </form>
-      )}
-    </span>
+    <>
+      <button aria-label="Helpful" aria-pressed={value === 1} title="Helpful" onClick={() => send(1)}
+        className={`rounded p-1.5 hover:bg-hover ${value === 1 ? "text-ok" : "text-muted hover:text-foreground"}`}><ThumbsUp className="h-4 w-4" /></button>
+      <button aria-label="Not helpful" aria-pressed={value === -1} title="Not helpful" onClick={() => send(-1)}
+        className={`rounded p-1.5 hover:bg-hover ${value === -1 ? "text-bad" : "text-muted hover:text-foreground"}`}><ThumbsDown className="h-4 w-4" /></button>
+    </>
   );
 }
 
-const SOURCE_LABEL: Record<string, string> = { slack: "Slack", gdrive: "Drive", notion: "Notion", github: "GitHub", web: "Site" };
+const SOURCE_LABEL: Record<string, string> = { slack: "Slack", gdrive: "Google Drive", notion: "Notion", github: "GitHub", web: "Website", upload: "Uploaded file" };
 
-function SourceChip({ s }: { s: Source }) {
-  const label = s.kind === "web" ? s.title : s.source && s.source !== "upload" ? `${SOURCE_LABEL[s.source] ?? s.source} · ${s.document}` : `${s.document} p.${s.page}`;
-  const body = (
-    <span className="inline-flex max-w-xs items-center gap-1.5 truncate rounded-md border border-line bg-panel px-2 py-1 text-xs" title={s.content ?? s.url}>
-      <span className="font-mono text-accent">{s.label}</span>
-      <span className="truncate">{label}</span>
-    </span>
+function SourceRow({ s }: { s: Source }) {
+  const name = s.kind === "web" ? s.title : s.document;
+  const where = s.kind === "web" ? "Web" : s.source && s.source !== "upload" ? SOURCE_LABEL[s.source] ?? s.source : `Uploaded file, page ${s.page}`;
+  return (
+    <li className="flex items-start gap-2 text-sm">
+      <span className="mt-0.5 w-7 shrink-0 font-mono text-xs text-accent">{s.label}</span>
+      <span className="min-w-0 flex-1">
+        {s.url ? (
+          <a href={s.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+            {name}<ExternalLink className="h-3 w-3" aria-hidden />
+          </a>
+        ) : <span className="inline-flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-muted" aria-hidden />{name}</span>}
+        <span className="ml-2 text-xs text-muted">{where}</span>
+      </span>
+    </li>
   );
-  return s.url ? <a href={s.url} target="_blank" rel="noreferrer">{body}</a> : body;
 }
 
 const TOOL_LABEL: Record<string, string> = {
-  search_documents: "Searching docs",
-  web_search: "Searching the web",
-  list_data_sources: "Finding data",
-  analyze_spreadsheet: "Analyzing the sheet",
-  describe_tables: "Reading table columns",
-  run_sql: "Querying data",
-  create_chart: "Making a chart",
-  code_execution: "Running a calculation",
+  search_documents: "Searched documents",
+  web_search: "Searched the web",
+  list_data_sources: "Listed data sources",
+  analyze_spreadsheet: "Analyzed spreadsheet",
+  describe_tables: "Read table columns",
+  run_sql: "Queried data",
+  create_chart: "Created chart",
+  code_execution: "Ran a calculation",
 };
 
 function Trace({ steps, pending }: { steps: Step[]; pending: boolean }) {
-  const tools = steps.filter((s) => s.type === "tool").length;
+  const n = steps.filter((s) => s.type === "tool").length;
   return (
-    <details open={pending} className="rounded-lg border border-line bg-panel text-sm">
-      <summary className="cursor-pointer select-none px-3 py-2 text-muted">
-        How I got this answer · {tools} step{tools === 1 ? "" : "s"}
+    <details open={pending} className="group border-t border-line">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-4 py-2.5 text-xs font-medium text-text2 hover:bg-hover">
+        <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" aria-hidden />
+        How this answer was produced ({n} {n === 1 ? "step" : "steps"})
       </summary>
-      <ol className="space-y-2 border-t border-line px-3 py-2">
-        {steps.map((s, i) => (
-          <li key={i} className="flex gap-2">
-            <StepView s={s} />
-          </li>
-        ))}
+      <ol className="space-y-2 px-4 pt-1 pb-3 text-xs">
+        {steps.map((s, i) => <li key={i}><StepView s={s} /></li>)}
       </ol>
     </details>
   );
@@ -302,139 +327,34 @@ function Trace({ steps, pending }: { steps: Step[]; pending: boolean }) {
 function StepView({ s }: { s: Step }) {
   switch (s.type) {
     case "thinking":
-      return <p className="whitespace-pre-wrap italic text-muted">{s.text}</p>;
+      return <p className="whitespace-pre-wrap text-muted">{s.text}</p>;
     case "tool":
       return (
-        <p>
-          <span className="mr-2 rounded bg-accent/15 px-1.5 py-0.5 text-xs font-medium text-accent">
-            {s.name.startsWith("mcp:") ? `App · ${s.name.slice(4)}` : TOOL_LABEL[s.name] ?? s.name}
-          </span>
-          <code className="font-mono text-xs text-muted">{fmtInput(s.input)}</code>
+        <p className="flex flex-wrap items-baseline gap-2">
+          <span className="font-medium text-foreground">{s.name.startsWith("mcp:") ? `Used app tool ${s.name.slice(4)}` : TOOL_LABEL[s.name] ?? s.name}</span>
+          <code className="font-mono text-muted">{fmtInput(s.input)}</code>
         </p>
       );
     case "tool_result":
-      return <p className={`line-clamp-2 font-mono text-xs ${s.error ? "text-bad" : "text-muted"}`}>↳ {s.summary}</p>;
+      return <p className={`line-clamp-2 pl-3 font-mono ${s.error ? "text-bad" : "text-muted"}`}>{s.summary}</p>;
     case "critic":
       return (
-        <p className={s.passed ? "text-ok" : "text-warn"}>
-          Fact-check (attempt {s.attempt}): {s.passed ? "passed" : "found problems"}
-          {!s.passed && <span className="block text-muted">{s.feedback}</span>}
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Status kind={s.passed ? "success" : "warning"}>Fact-check {s.attempt}: {s.passed ? "passed" : "issues found"}</Status>
+          {!s.passed && <span className="text-text2">{s.feedback}</span>}
+        </div>
       );
     case "revising":
-      return <p className="font-medium text-warn">↻ Rechecking and rewriting (attempt {s.attempt})</p>;
+      return <Status kind="info">Rewriting answer (attempt {s.attempt})</Status>;
     case "error":
-      return <p className="text-bad">Error: {s.message}</p>;
+      return <Status kind="error">{s.message}</Status>;
   }
 }
 
 function fmtInput(input: unknown) {
   if (input && typeof input === "object") {
     const o = input as Record<string, unknown>;
-    const text = String(o.query ?? o.title ?? o.table ?? o.command ?? o.code ?? (Array.isArray(o.tables) ? o.tables.join(", ") : "") ?? "").slice(0, 200);
-    return o.source && typeof o.source === "string" && !o.source.startsWith("conn-") && o.source !== "uploads"
-      ? `${text} · in ${SOURCE_LABEL[o.source] ?? o.source}` : text;
+    return String(o.query ?? o.title ?? o.table ?? o.command ?? o.code ?? (Array.isArray(o.tables) ? o.tables.join(", ") : "") ?? "").slice(0, 200);
   }
   return String(input ?? "");
-}
-
-function Sidebar({ onChange, onAnalyze, busy }: { onChange: () => void; onAnalyze: (s: Sheet) => void; busy: boolean }) {
-  const me = useMe()!;
-  const [lib, setLib] = useState<Library>({ documents: [], tables: [] });
-  const [status, setStatus] = useState("");
-  const [visibility, setVisibility] = useState<"everyone" | "private">("everyone");
-
-  const refresh = useCallback(
-    () => api("/api/sources").then((r) => r.json()).then(setLib).catch(() => setStatus("Backend not reachable")),
-    [],
-  );
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  async function upload(files: FileList | null) {
-    for (const file of Array.from(files ?? [])) {
-      setStatus(`Reading ${file.name}…`);
-      const body = new FormData();
-      body.append("file", file);
-      body.append("visibility", visibility);
-      const res = await api("/api/upload", { method: "POST", body });
-      const json = await res.json();
-      const tabs = json.kind === "tables" ? json.tables.length : 0;
-      setStatus(res.ok ? `Added ${file.name}${tabs > 1 ? ` (${tabs} tabs)` : ""}${visibility === "private" ? " · only you" : ""}` : `${file.name}: ${json.detail}`);
-    }
-    refresh();
-    onChange();
-  }
-
-  async function removeSheet(s: Sheet) {
-    if (!confirm(`Delete ${s.title}?`)) return;
-    const res = await api(`/api/tables/${s.name}`, { method: "DELETE" });
-    if (!res.ok) setStatus((await res.json()).detail);
-    refresh();
-    onChange();
-  }
-
-  async function remove(id: number, name: string) {
-    if (!confirm(`Delete ${name}?`)) return;
-    const res = await api(`/api/documents/${id}`, { method: "DELETE" });
-    if (!res.ok) setStatus((await res.json()).detail);
-    refresh();
-    onChange();
-  }
-
-  return (
-    <aside className="max-h-64 shrink-0 overflow-y-auto border-b border-line p-4 text-sm md:max-h-none md:w-72 md:border-b-0 md:border-r">
-      <label className="block cursor-pointer rounded-lg border border-dashed border-line px-3 py-4 text-center text-muted hover:border-accent hover:text-foreground">
-        <span className="block font-medium text-foreground">Add files</span>
-        <span className="text-xs">Excel or CSV spreadsheets, PDFs, text and Markdown</span>
-        <input type="file" multiple accept=".xlsx,.xlsm,.csv,.pdf,.txt,.md" className="sr-only" onChange={(e) => upload(e.target.files)} />
-      </label>
-      <div className="mt-2 flex items-center gap-2 text-xs text-muted">
-        <span>Who can see uploads:</span>
-        <select value={visibility} onChange={(e) => setVisibility(e.target.value as "everyone" | "private")} className="rounded border border-line bg-background px-1 py-0.5" aria-label="Upload visibility">
-          <option value="everyone">Everyone</option>
-          <option value="private">Only me</option>
-        </select>
-      </div>
-      {status && <p className="mt-2 text-xs text-muted" role="status">{status}</p>}
-
-      <h2 className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Files</h2>
-      {lib.documents.length === 0 && <p className="text-xs text-muted">Nothing yet. Add a policy, handbook or report to try it out.</p>}
-      <ul className="space-y-1">
-        {lib.documents.map((d) => (
-          <li key={d.id} className="group flex items-center justify-between gap-2">
-            <span className="truncate" title={d.name}>{d.private && <span title="Only you can see this" className="mr-1">🔒</span>}{d.name}</span>
-            {(d.mine || me.role === "admin") && (
-              <button onClick={() => remove(d.id, d.name)} aria-label={`Delete ${d.name}`} className="shrink-0 text-xs text-muted opacity-0 hover:text-bad group-hover:opacity-100 focus:opacity-100">✕</button>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      <h2 className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Spreadsheets</h2>
-      {lib.tables.length === 0 && <p className="text-xs text-muted">Add an Excel or CSV file, then click Analyze for insights and charts.</p>}
-      <ul className="space-y-2.5">
-        {lib.tables.map((s) => (
-          <li key={s.name} className="group">
-            <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate" title={`${s.title} · table ${s.name}`}>
-                {s.private && <span title="Restricted" className="mr-1">🔒</span>}
-                {s.source === "gdrive" && <span title="From Google Drive" className="mr-1 text-xs text-muted">▲</span>}
-                {s.title.includes(" › ") ? <>{s.title.split(" › ")[1]} <span className="text-xs text-muted">· {s.title.split(" › ")[0]}</span></> : s.title}
-              </span>
-              <button onClick={() => onAnalyze(s)} disabled={busy} className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-40"
-                title="Find trends, top performers, dips and outliers, with charts">
-                Analyze
-              </button>
-              {(s.mine || me.role === "admin") && s.source === "upload" && (
-                <button onClick={() => removeSheet(s)} aria-label={`Delete ${s.title}`} className="shrink-0 text-xs text-muted opacity-0 hover:text-bad group-hover:opacity-100 focus:opacity-100">✕</button>
-              )}
-            </div>
-            <p className="truncate text-xs text-muted" title={Object.keys(s.columns).join(", ")}>{Object.keys(s.columns).join(", ")}</p>
-          </li>
-        ))}
-      </ul>
-    </aside>
-  );
 }
