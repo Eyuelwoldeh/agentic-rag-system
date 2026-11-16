@@ -44,7 +44,10 @@ export type AgentEvent =
 /** POST a question and yield server-sent events as they arrive. */
 export async function* streamChat(question: string, history: { role: string; content: string }[], analyze?: string, conversationId?: number): AsyncGenerator<AgentEvent> {
   const res = await api("/api/chat", { method: "POST", body: JSON.stringify({ question, history, analyze, conversation_id: conversationId }) });
-  if (!res.ok || !res.body) throw new Error(`Request failed: ${res.status} ${await res.text()}`);
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${res.status})`);  // e.g. 429 limit messages
+  }
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
   for (;;) {

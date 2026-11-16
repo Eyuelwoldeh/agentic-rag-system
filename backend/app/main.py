@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import agent, auth, connectors, conversations, dashboards, datasources, insights, llm, notify, oauth, previews, schedules, tableacl, versions
+from . import agent, auth, connectors, conversations, dashboards, datasources, insights, limits, llm, notify, oauth, ops, previews, tableacl, versions, worker
 from .db import connect, migrate
 from .ingest import drop_tables, ingest_document, ingest_spreadsheet
 from .security import FRONTEND_URL, User, csrf_middleware, current_user, require_admin
@@ -16,8 +16,7 @@ from .security import FRONTEND_URL, User, csrf_middleware, current_user, require
 @asynccontextmanager
 async def lifespan(_app):
     migrate()
-    connectors.start_scheduler()
-    schedules.start()
+    worker.start()  # WORKER_MODE=inline (default): jobs and periodic work run in this process
     yield
 
 
@@ -32,6 +31,7 @@ app.include_router(insights.router)
 app.include_router(previews.router)
 app.include_router(conversations.router)
 app.include_router(notify.router)
+app.include_router(ops.router)
 
 MAX_UPLOAD = 25 * 1024 * 1024
 DOC_TYPES = (".pdf", ".txt", ".md")
@@ -54,6 +54,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 def chat(req: ChatRequest, user: User = Depends(current_user)):
+    limits.check(user)  # 429 when over the daily AI budget or the questions-per-minute limit
     if req.conversation_id:
         conversations.owned(req.conversation_id, user)  # 404 for someone else's conversation
         conv_id, history = req.conversation_id, conversations.history(req.conversation_id)  # server-side context
@@ -296,6 +297,9 @@ def get_ai(_: User = Depends(require_admin)):
 
 @app.put("/api/ai")
 def put_ai(body: AISettings, _: User = Depends(require_admin)):
+    for provider, model in (body.models or {}).items():
+        if model.strip() and not limits.model_allowed(provider, model.strip()):
+            raise HTTPException(422, f"{model.strip()} isn't on the allowed models list (Settings, Data and retention)")
     for provider, key in (body.keys or {}).items():
         if key:  # verify before saving: a typo'd key should fail here, not mid-conversation
             try:

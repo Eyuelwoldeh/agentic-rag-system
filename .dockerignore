@@ -1,0 +1,11 @@
+# Context for backend/Dockerfile (repo root). Secrets and local builds stay out of the image.
+.git
+.claude
+.remember
+**/.env
+**/.env.*
+**/__pycache__
+**/.pytest_cache
+backend/.venv
+backend/evals
+frontend

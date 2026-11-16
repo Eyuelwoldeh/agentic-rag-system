@@ -7,13 +7,14 @@ import { Button, Field, inputCls, Page, PageHeader, Panel, Status, useUI } from 
 import { api, apiJson } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { ago } from "@/lib/time";
+import DataRetention from "./data";
 
-type Tab = "ai" | "team" | "apps" | "account";
+type Tab = "ai" | "team" | "apps" | "data" | "account";
 
 export default function Settings() {
   const me = useMe()!;
   const admin = me.role === "admin";
-  const tabs: [Tab, string][] = admin ? [["ai", "AI model"], ["team", "Team"], ["apps", "Sign-in apps"], ["account", "Your account"]] : [["account", "Your account"]];
+  const tabs: [Tab, string][] = admin ? [["ai", "AI model"], ["team", "Team"], ["apps", "Sign-in apps"], ["data", "Data and retention"], ["account", "Your account"]] : [["account", "Your account"]];
   const [tab, setTab] = useState<Tab>(tabs[0][0]);
   return (
     <>
@@ -32,6 +33,7 @@ export default function Settings() {
         {tab === "ai" && <AIModel />}
         {tab === "team" && <Team myId={me.id} />}
         {tab === "apps" && <OAuthApps />}
+        {tab === "data" && <DataRetention />}
         {tab === "account" && <Account email={me.email} role={me.role} />}
       </Page>
     </>

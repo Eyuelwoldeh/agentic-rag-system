@@ -111,7 +111,7 @@ export default function Ask() {
         else patchLast((m) => ({ steps: [...m.steps, ev], ...(ev.type === "revising" ? { content: "", charts: [] } : {}) }));
       }
     } catch (err) {
-      patchLast((m) => ({ steps: [...m.steps, { type: "error", message: String(err) }] }));
+      patchLast((m) => ({ steps: [...m.steps, { type: "error", message: err instanceof Error ? err.message : String(err) }] }));
     } finally {
       patchLast(() => ({ pending: false }));
       setBusy(false);
