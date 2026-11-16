@@ -85,6 +85,8 @@ def test_metric_api_and_agent_tools(sales):
     mid = admin.post("/api/metrics", json=body).json()["id"]
     assert admin.post("/api/metrics", json={**body, "name": "INS revenue"}).status_code == 409
     assert any(m["name"] == "ins Revenue" for m in ana.get("/api/metrics").json())  # everyone can view
+    cat = {s["id"]: s for s in ana.get("/api/metrics/catalog").json()}
+    assert cat["uploads"]["tables"][table] == COLS and secret not in cat["uploads"]["tables"]
     assert ana.post(f"/api/metrics/{mid}/test").json()["value"] == 2 * 11 * 1000 - 600 + 11 * 500 + 11 * 600
 
     # a metric on a sheet the member can't see: hidden from the assistant, and Test fails for them

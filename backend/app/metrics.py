@@ -216,6 +216,19 @@ def _validate(body: MetricIn, user: User) -> dict:
     return m
 
 
+@router.get("/api/metrics/catalog")
+def catalog(user: User = Depends(current_user)):
+    """Data sources, tables and columns this person can see, for building metrics and alerts."""
+    out = []
+    for src in datasources.available(user.email):
+        try:
+            tables = {t: list(c) for t, c in datasources.list_tables(src["id"], user.email).items()}
+        except Exception:
+            continue  # a broken warehouse shouldn't break the form
+        out.append({"id": src["id"], "name": src["name"], "tables": tables})
+    return out
+
+
 @router.get("/api/metrics")
 def list_metrics(user: User = Depends(current_user)):
     with connect() as conn:
