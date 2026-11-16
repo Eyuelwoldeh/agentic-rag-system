@@ -167,13 +167,18 @@ def clean_config(kind: str, config: dict) -> dict:
 
 
 def clean_allowed(allowed: list[str] | None) -> list[str] | None:
-    """None/empty = everyone. Otherwise validated, lowercased, de-duplicated emails."""
+    """None/empty = everyone. Otherwise validated, lowercased, de-duplicated emails and `group:<name>` entries."""
+    from ..groups import PREFIX, existing
+
     if not allowed:
         return None
-    out = sorted({e.strip().lower() for e in allowed if e.strip()})
-    bad = [e for e in out if "@" not in e or " " in e]
+    out = sorted({" ".join(e.split()).lower() for e in allowed if e.strip()})
+    groups = [e[len(PREFIX):] for e in out if e.startswith(PREFIX)]
+    bad = [e for e in out if not e.startswith(PREFIX) and ("@" not in e or " " in e)]
     if bad:
         raise ValueError(f"Not an email: {', '.join(bad[:3])}")
+    if missing := sorted(set(groups) - existing(groups)):
+        raise ValueError(f"No such group: {', '.join(missing[:3])}")
     return out or None
 
 

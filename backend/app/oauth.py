@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import connectors
+from . import audit, connectors
 from .connectors.base import request as http_request
 from .db import connect
 from .security import FRONTEND_URL, PUBLIC_URL, User, current_user, decrypt, encrypt, require_admin
@@ -63,20 +63,22 @@ def list_apps(_: User = Depends(require_admin)):
 
 
 @router.put("/api/oauth/apps/{provider}")
-def save_app(provider: str, body: AppCreds, _: User = Depends(require_admin)):
+def save_app(provider: str, body: AppCreds, admin: User = Depends(require_admin)):
     _oauth_module(provider)
     with connect() as conn:
         conn.execute(
             "INSERT INTO oauth_apps (provider, client_id, client_secret) VALUES (%s, %s, %s) "
             "ON CONFLICT (provider) DO UPDATE SET client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret, updated_at = now()",
             (provider, body.client_id.strip(), encrypt(body.client_secret.strip())))
+    audit.record("oauth_app.save", admin, f"oauth_app:{provider}", {"client_id": body.client_id.strip()})
     return {"ok": True}
 
 
 @router.delete("/api/oauth/apps/{provider}")
-def delete_app(provider: str, _: User = Depends(require_admin)):
+def delete_app(provider: str, admin: User = Depends(require_admin)):
     with connect() as conn:
         conn.execute("DELETE FROM oauth_apps WHERE provider = %s", (provider,))
+    audit.record("oauth_app.delete", admin, f"oauth_app:{provider}")
     return {"ok": True}
 
 
@@ -167,6 +169,7 @@ def callback(provider: str, request: Request, state: str = "", code: str = "", e
         conn_id = connectors.create(provider, row[3], row[4], creds=creds, user_id=user.id, allowed=row[5])
     except Exception as e:
         return back(error=str(e)[:300])
+    audit.record("connection.create", user, f"connection:{conn_id}", {"kind": provider, "name": row[3], "allowed": row[5], "via": "oauth"})
     connectors.sync_in_background(conn_id)
     return back(connected=str(conn_id))
 

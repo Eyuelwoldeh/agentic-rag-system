@@ -51,6 +51,10 @@ Admins pick **Claude** or **ChatGPT** in **Settings → AI model** and paste API
 - **Secrets at rest:** connector tokens and OAuth client secrets are Fernet-encrypted with `SECRETS_KEY`. They are write-only: the API never returns them.
 - **Spreadsheet access is enforced by Postgres:** each user queries as their own database login role, granted `SELECT` only on the sheets they may see (private uploads, Drive sharing, connection access lists), inside a read-only transaction as a single prepared statement. Even SQL run inside functions (`query_to_xml`) can't reach someone else's sheet. Production note: the app's DB user needs `CREATEROLE`.
 - **Crawler:** refuses private, loopback and link-local addresses, and re-checks every redirect hop.
+- **Single sign-on (Settings → Single sign-on):** any OpenID Connect provider (Okta, Microsoft Entra ID, Google Workspace). Authorization code + PKCE, a single-use state bound to the browser, a nonce, and ID tokens verified against the provider's JWKS (iss, aud, exp, nonce, `email_verified`). People from the allowed email domains get an account on first sign-in with the default role. "Require SSO" refuses password sign-in for members; admins keep it as a break-glass. Redirect URL: `PUBLIC_URL/api/sso/callback`.
+- **SCIM 2.0 provisioning** at `PUBLIC_URL/scim/v2` (Users and Groups, the subset Okta and Entra use). An admin generates the bearer token in Settings; it's shown once and stored as a hash. Deactivating a user deletes their sessions and blocks sign-in immediately.
+- **Groups (Settings → Groups, or from SCIM):** access lists can name `group:<name>` as well as emails. Every access check compares the list with the viewer's email plus their groups. Deleting a group removes it from access lists, which never makes content public.
+- **Audit log (/audit, admins):** sign-ins and failures, people, roles, groups, SCIM, connections and access, uploads, replacements and deletions, settings changes and dashboard sharing, with the client IP. Filter by action, person and dates; export to CSV.
 
 ## Connectors
 
@@ -89,7 +93,7 @@ Business systems (QuickBooks to Salesforce) are re-exported in full on each sync
 
 Adding a connector = one module in `backend/app/connectors/` exposing `LABEL`, `CATEGORY`, `CONFIG`, `OAUTH`, `PASTE`, `whoami(creds)` and `fetch(config, since, creds)`, plus one line in `REGISTRY`.
 
-**Permissions.** Every document and connection can carry an access list (emails). Search, SQL, dashboards and MCP tools all apply it, so a document is visible only when both its own list and its connection's list allow the viewer. Lists come from:
+**Permissions.** Every document and connection can carry an access list (emails and `group:<name>` entries). Search, SQL, dashboards and MCP tools all apply it, so a document is visible only when both its own list and its connection's list allow the viewer. Lists come from:
 - **the connection**: "Who can see results from this source?" when connecting; editable any time and effective immediately;
 - **the source itself**: Slack private channels → their members; Google Drive → the file's sharing (link/domain-shared = everyone);
 - **uploads**: "Only me" or "Everyone".

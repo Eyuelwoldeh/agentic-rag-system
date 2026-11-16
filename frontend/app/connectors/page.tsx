@@ -108,7 +108,7 @@ function ConnectionsTable({ rows, byKind, onChange, empty }: { rows: Connection[
     ) },
     { key: "type", label: "Type", sort: (c) => c.kind, render: (c) => <span className="text-text2">{byKind[c.kind]?.label ?? c.kind}</span> },
     { key: "status", label: "Status", render: (c) => statusOf(c, !synced(byKind[c.kind]?.category)) },
-    { key: "access", label: "Access", render: (c) => c.allowed ? <Status kind="restricted">{c.allowed.length} {c.allowed.length === 1 ? "person" : "people"}</Status> : <span className="text-text2">Everyone</span> },
+    { key: "access", label: "Access", render: (c) => c.allowed ? <Status kind="restricted">{accessLabel(c.allowed)}</Status> : <span className="text-text2">Everyone</span> },
     { key: "docs", label: "Documents", num: true, sort: (c) => c.documents, render: (c) => synced(byKind[c.kind]?.category) ? c.documents.toLocaleString() : <span className="text-muted">Live</span> },
     { key: "last", label: "Last checked", sort: (c) => c.last_synced_at ?? "", render: (c) => <span className="text-text2">{c.last_synced_at ? ago(c.last_synced_at) : "Never"}</span> },
     { key: "actions", label: "", className: "w-1", render: (c) => {
@@ -197,18 +197,55 @@ function CatalogPanel({ available, onClose, onPick }: { available: Available[]; 
 }
 
 const splitEmails = (s: string) => s.split(/[\s,;]+/).map((e) => e.trim()).filter(Boolean);
+const GROUP = "group:";
 
-function AccessFields({ mode, setMode, emails, setEmails }: { mode: string; setMode: (m: "everyone" | "people") => void; emails: string; setEmails: (s: string) => void }) {
+function accessLabel(allowed: string[]) {
+  const g = allowed.filter((a) => a.startsWith(GROUP)).length, p = allowed.length - g;
+  return [p && `${p} ${p === 1 ? "person" : "people"}`, g && `${g} ${g === 1 ? "group" : "groups"}`].filter(Boolean).join(", ") || "Nobody";
+}
+
+/** Access list state: emails typed in, plus groups picked from Settings → Groups (stored as `group:<name>`). */
+function useAccess(initial: string[] | null) {
+  const [mode, setMode] = useState<"everyone" | "people">(initial ? "people" : "everyone");
+  const [emails, setEmails] = useState((initial ?? []).filter((a) => !a.startsWith(GROUP)).join(", "));
+  const [groups, setGroups] = useState<string[]>((initial ?? []).filter((a) => a.startsWith(GROUP)));
+  const allowed = mode === "people" ? [...splitEmails(emails), ...groups] : null;
+  return { mode, setMode, emails, setEmails, groups, setGroups, allowed };
+}
+
+function AccessFields({ mode, setMode, emails, setEmails, groups, setGroups }: ReturnType<typeof useAccess>) {
+  const [options, setOptions] = useState<{ name: string; principal: string; members: unknown[] }[] | null>(null);
+  useEffect(() => {
+    apiJson<{ name: string; principal: string; members: unknown[] }[]>("/api/groups").then(setOptions).catch(() => setOptions([]));
+  }, []);
   return (
     <fieldset className="space-y-2">
       <legend className="mb-1 text-xs font-medium text-text2">Who can see results from this source</legend>
       <label className="flex items-center gap-2 text-sm"><input type="radio" checked={mode === "everyone"} onChange={() => setMode("everyone")} className="accent-[var(--accent)]" /> Everyone signed in</label>
-      <label className="flex items-center gap-2 text-sm"><input type="radio" checked={mode === "people"} onChange={() => setMode("people")} className="accent-[var(--accent)]" /> Only specific people</label>
+      <label className="flex items-center gap-2 text-sm"><input type="radio" checked={mode === "people"} onChange={() => setMode("people")} className="accent-[var(--accent)]" /> Only specific people and groups</label>
       {mode === "people" && (
-        <Field label="Email addresses" helper="Separate with commas.">
-          <textarea value={emails} onChange={(e) => setEmails(e.target.value)} rows={2} placeholder="ana@company.com, bo@company.com"
-            className={`${inputCls} h-auto py-1.5`} />
-        </Field>
+        <div className="space-y-3 pl-6">
+          <fieldset>
+            <legend className="mb-1 text-xs font-medium text-text2">Groups</legend>
+            {options === null ? <p className="text-xs text-muted">Loading groups…</p> : options.length === 0 ? (
+              <p className="text-xs text-muted">No groups yet. Create them in <Link href="/settings" className="text-accent underline">Settings</Link> under Groups.</p>
+            ) : (
+              <div className="max-h-40 space-y-1 overflow-y-auto">
+                {options.map((g) => (
+                  <label key={g.principal} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={groups.includes(g.principal)} className="accent-[var(--accent)]"
+                      onChange={(e) => setGroups(e.target.checked ? [...groups, g.principal] : groups.filter((x) => x !== g.principal))} />
+                    {g.name}<span className="text-xs text-muted">{g.members.length} {g.members.length === 1 ? "member" : "members"}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </fieldset>
+          <Field label="Email addresses" helper="Separate with commas.">
+            <textarea value={emails} onChange={(e) => setEmails(e.target.value)} rows={2} placeholder="ana@company.com, bo@company.com"
+              className={`${inputCls} h-auto py-1.5`} />
+          </Field>
+        </div>
       )}
       <p className="text-xs text-muted">Slack private channels and Google Drive files also keep their own sharing rules.</p>
     </fieldset>
@@ -216,18 +253,18 @@ function AccessFields({ mode, setMode, emails, setEmails }: { mode: string; setM
 }
 
 function AccessDialog({ c, onClose, onSaved }: { c: Connection; onClose: () => void; onSaved: () => void }) {
-  const [mode, setMode] = useState<"everyone" | "people">(c.allowed ? "people" : "everyone");
-  const [emails, setEmails] = useState((c.allowed ?? []).join(", "));
+  const access = useAccess(c.allowed);
   const [err, setErr] = useState("");
   async function save() {
-    const res = await api(`/api/connections/${c.id}/access`, { method: "PUT", body: JSON.stringify({ allowed: mode === "everyone" ? null : splitEmails(emails) }) });
+    if (access.allowed && !access.allowed.length) return setErr("Add at least one person or group, or choose Everyone signed in.");
+    const res = await api(`/api/connections/${c.id}/access`, { method: "PUT", body: JSON.stringify({ allowed: access.allowed }) });
     if (res.ok) onSaved();
     else setErr((await res.json()).detail);
   }
   return (
     <SidePanel title={`Access for ${c.name}`} description="Changes apply immediately to search, queries and dashboards." onClose={onClose}
       footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={save}>Save access</Button></>}>
-      <AccessFields mode={mode} setMode={setMode} emails={emails} setEmails={setEmails} />
+      <AccessFields {...access} />
       {err && <p className="mt-3 text-sm text-bad">{err}</p>}
     </SidePanel>
   );
@@ -238,17 +275,16 @@ function AddPanel({ a, onClose, onAdded }: { a: Available; onClose: () => void; 
   const [name, setName] = useState(a.label);
   const [credential, setCredential] = useState("");
   const [usePaste, setUsePaste] = useState(!a.oauth_ready);
-  const [mode, setMode] = useState<"everyone" | "people">("everyone");
-  const [emails, setEmails] = useState("");
+  const access = useAccess(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const allowed = mode === "people" ? splitEmails(emails) : null;
+  const allowed = access.allowed;
   const formId = `connect-${a.kind}`;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
-    if (mode === "people" && !allowed?.length) return setErr("Add at least one email address, or choose Everyone signed in.");
+    if (allowed && !allowed.length) return setErr("Add at least one person or group, or choose Everyone signed in.");
     if (a.oauth_ready && !usePaste) {
       const q = new URLSearchParams({ name, config: JSON.stringify(values), allowed: (allowed ?? []).join(",") });
       location.href = `${API}/api/oauth/${a.kind}/start?${q}`; // backend records state + PKCE, then redirects to the provider
@@ -308,7 +344,7 @@ function AddPanel({ a, onClose, onAdded }: { a: Available; onClose: () => void; 
             </div>
           </details>
         )}
-        <AccessFields mode={mode} setMode={setMode} emails={emails} setEmails={setEmails} />
+        <AccessFields {...access} />
         {a.oauth_ready && a.paste && (
           <button type="button" onClick={() => setUsePaste(!usePaste)} className="text-xs text-accent underline">
             {usePaste ? `Sign in with ${a.label} instead` : "Use a token instead"}

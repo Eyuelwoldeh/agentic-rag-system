@@ -5,6 +5,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from . import audit, sso
 from .db import connect
 from .security import (SESSION_COOKIE, User, check_password_policy, clear_failures, create_session, current_user,
                        delete_session, hash_password, record_failure, require_admin, set_session_cookie, throttle,
@@ -56,18 +57,32 @@ def login(body: Credentials, request: Request, response: Response):
     key = f"{email}|{request.client.host if request.client else ''}"
     throttle(key)
     with connect() as conn:
-        row = conn.execute("SELECT id, password_hash, role FROM users WHERE email = %s", (email,)).fetchone()
+        row = conn.execute("SELECT id, password_hash, role, disabled FROM users WHERE email = %s", (email,)).fetchone()
     if not verify_password(body.password, row[1] if row else _DUMMY_HASH) or not row:
         record_failure(key)
+        audit.record("user.login_failed", None, f"user:{email}"[:300], {"reason": "wrong email or password"})
         raise HTTPException(401, "Wrong email or password")
     clear_failures(key)
+    user = User(id=row[0], email=email, role=row[2])
+    if row[3]:
+        audit.record("user.login_failed", user, f"user:{row[0]}", {"reason": "deactivated"})
+        raise HTTPException(403, "Your account is deactivated. Contact an administrator.")
+    if row[2] != "admin" and sso.required():  # admins keep password sign-in as a break-glass
+        audit.record("user.login_failed", user, f"user:{row[0]}", {"reason": "sso required"})
+        raise HTTPException(403, "Your organization requires single sign-on. Use Sign in with SSO.")
     set_session_cookie(response, create_session(row[0]))
+    audit.record("user.login", user, f"user:{row[0]}", {"method": "password"})
     return {"id": row[0], "email": email, "role": row[2]}
 
 
 @router.post("/api/auth/logout")
 def logout(request: Request, response: Response):
     if token := request.cookies.get(SESSION_COOKIE):
+        try:
+            user = current_user(request)
+            audit.record("user.logout", user, f"user:{user.id}")
+        except HTTPException:
+            pass
         delete_session(token)
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"ok": True}
@@ -108,12 +123,12 @@ class NewUser(BaseModel):
 @router.get("/api/users")
 def list_users(_: User = Depends(require_admin)):
     with connect() as conn:
-        rows = conn.execute("SELECT id, email, role, created_at FROM users ORDER BY id").fetchall()
-    return [{"id": r[0], "email": r[1], "role": r[2], "created_at": r[3]} for r in rows]
+        rows = conn.execute("SELECT id, email, role, created_at, disabled FROM users ORDER BY id").fetchall()
+    return [{"id": r[0], "email": r[1], "role": r[2], "created_at": r[3], "disabled": r[4]} for r in rows]
 
 
 @router.post("/api/users")
-def create_user(body: NewUser, _: User = Depends(require_admin)):
+def create_user(body: NewUser, admin: User = Depends(require_admin)):
     """Creates the account with a one-time temporary password, returned once for the admin to share."""
     email = _email(body.email)
     temp = secrets.token_urlsafe(12)
@@ -122,6 +137,7 @@ def create_user(body: NewUser, _: User = Depends(require_admin)):
                            "ON CONFLICT (email) DO NOTHING RETURNING id", (email, hash_password(temp), body.role)).fetchone()
     if not row:
         raise HTTPException(409, "A user with that email already exists")
+    audit.record("user.create", admin, f"user:{row[0]}", {"email": email, "role": body.role})
     return {"id": row[0], "email": email, "role": body.role, "temporary_password": temp}
 
 
@@ -130,5 +146,25 @@ def delete_user(user_id: int, admin: User = Depends(require_admin)):
     if user_id == admin.id:
         raise HTTPException(400, "You can't delete your own account")
     with connect() as conn:
-        conn.execute("DELETE FROM users WHERE id = %s", (user_id,))  # sessions cascade
+        row = conn.execute("DELETE FROM users WHERE id = %s RETURNING email", (user_id,)).fetchone()  # sessions cascade
+    if row:
+        audit.record("user.delete", admin, f"user:{user_id}", {"email": row[0]})
+    return {"ok": True}
+
+
+class RoleChange(BaseModel):
+    role: str = Field(pattern="^(admin|member)$")
+
+
+@router.patch("/api/users/{user_id}")
+def change_role(user_id: int, body: RoleChange, admin: User = Depends(require_admin)):
+    if user_id == admin.id:
+        raise HTTPException(400, "You can't change your own role")
+    with connect() as conn:
+        row = conn.execute("UPDATE users u SET role = %s FROM users old WHERE u.id = %s AND old.id = u.id "
+                           "RETURNING u.email, old.role", (body.role, user_id)).fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    if row[1] != body.role:
+        audit.record("user.role_change", admin, f"user:{user_id}", {"email": row[0], "from": row[1], "to": body.role})
     return {"ok": True}

@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from . import datasources, tableacl
 from .db import connect
+from .groups import principals
 from .ingest import embed
 
 PREVIEW_ROWS = 50
@@ -184,8 +185,8 @@ WITH scoped AS (
   SELECT c.* FROM chunks c JOIN documents d ON d.id = c.document_id
   LEFT JOIN connections cn ON cn.id = d.connection_id
   WHERE (%(source)s::text IS NULL OR d.source = %(source)s)
-    AND (d.allowed IS NULL OR %(email)s = ANY(d.allowed))
-    AND (cn.allowed IS NULL OR %(email)s = ANY(cn.allowed))
+    AND (d.allowed IS NULL OR d.allowed && %(p)s::text[])
+    AND (cn.allowed IS NULL OR cn.allowed && %(p)s::text[])
 ), sem AS (
   SELECT id, row_number() OVER (ORDER BY embedding <=> %(v)s) AS r
   FROM scoped ORDER BY embedding <=> %(v)s LIMIT 30
@@ -209,7 +210,7 @@ def search_documents(query: str, k: int = 6, source: str | None = None, email: s
     k = max(1, min(int(k), 15))
     with connect() as conn:
         rows = conn.execute(HYBRID_SQL, {"v": embed([query])[0], "q": query, "k": k, "source": source,
-                                         "email": email.lower() if email else None}).fetchall()
+                                         "p": principals(email)}).fetchall()
     keys = ["chunk_id", "document", "page", "content", "source", "url", "updated_at", "document_id", "replaced_at", "change_note"]
     return [dict(zip(keys, r)) for r in rows]
 

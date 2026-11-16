@@ -7,13 +7,15 @@ import { Button, Field, inputCls, Page, PageHeader, Panel, Status, useUI } from 
 import { api, apiJson } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { ago } from "@/lib/time";
+import { Groups, SingleSignOn } from "./identity";
 
-type Tab = "ai" | "team" | "apps" | "notifications" | "slack" | "account";
+type Tab = "ai" | "team" | "groups" | "sso" | "apps" | "notifications" | "slack" | "account";
 
 export default function Settings() {
   const me = useMe()!;
   const admin = me.role === "admin";
-  const tabs: [Tab, string][] = admin ? [["ai", "AI model"], ["team", "Team"], ["apps", "Sign-in apps"], ["notifications", "Notifications"], ["slack", "Slack bot"], ["account", "Your account"]] : [["account", "Your account"]];
+  const tabs: [Tab, string][] = admin ? [["ai", "AI model"], ["team", "Team"], ["groups", "Groups"], ["sso", "Single sign-on"], ["apps", "Sign-in apps"],
+    ["notifications", "Notifications"], ["slack", "Slack bot"], ["account", "Your account"]] : [["account", "Your account"]];
   const [tab, setTab] = useState<Tab>(tabs[0][0]);
   return (
     <>
@@ -31,6 +33,8 @@ export default function Settings() {
       <Page>
         {tab === "ai" && <AIModel />}
         {tab === "team" && <Team myId={me.id} />}
+        {tab === "groups" && <Groups />}
+        {tab === "sso" && <SingleSignOn />}
         {tab === "apps" && <OAuthApps />}
         {tab === "notifications" && <NotificationSettings />}
         {tab === "slack" && <SlackBot />}
@@ -84,7 +88,7 @@ function Account({ email, role }: { email: string; role: string }) {
 
 /* ---------- team ---------- */
 
-type UserRow = { id: number; email: string; role: string; created_at: string };
+type UserRow = { id: number; email: string; role: string; created_at: string; disabled?: boolean };
 
 function Team({ myId }: { myId: number }) {
   const { confirm, toast } = useUI();
@@ -115,10 +119,28 @@ function Team({ myId }: { myId: number }) {
     toast(`${u.email} removed.`);
     load();
   }
+  async function changeRole(u: UserRow, next: string) {
+    const label = next === "admin" ? "Administrator" : "Member";
+    if (!(await confirm({ title: `Make ${u.email} ${next === "admin" ? "an administrator" : "a member"}?`, action: `Make ${label.toLowerCase()}`,
+      body: next === "admin" ? "Administrators manage connectors, AI settings, people and the audit log." : "They lose access to administration pages." }))) return;
+    try {
+      await apiJson(`/api/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ role: next }) });
+      toast(`${u.email} is now ${next === "admin" ? "an administrator" : "a member"}.`);
+      load();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  }
 
   const cols: Column<UserRow>[] = [
     { key: "email", label: "Email", sort: (u) => u.email, render: (u) => <span className="font-medium">{u.email}{u.id === myId && <span className="ml-2 text-xs font-normal text-muted">(you)</span>}</span> },
-    { key: "role", label: "Role", sort: (u) => u.role, render: (u) => u.role === "admin" ? "Administrator" : "Member" },
+    { key: "role", label: "Role", sort: (u) => u.role, render: (u) => u.id === myId ? "Administrator" : (
+      <select value={u.role} onChange={(e) => changeRole(u, e.target.value)} aria-label={`Role for ${u.email}`} className={`${inputCls} h-7 w-36`}>
+        <option value="member">Member</option>
+        <option value="admin">Administrator</option>
+      </select>
+    ) },
+    { key: "status", label: "Status", sort: (u) => String(!!u.disabled), render: (u) => u.disabled ? <Status kind="error">Deactivated</Status> : <Status kind="success">Active</Status> },
     { key: "added", label: "Added", sort: (u) => u.created_at, render: (u) => <span className="text-text2">{ago(u.created_at)}</span> },
     { key: "actions", label: "", className: "w-1", render: (u) => u.id !== myId && (
       <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => remove(u)} aria-label={`Remove ${u.email}`}>Remove</Button>

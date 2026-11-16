@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 
 from . import agent, auth, comments, connectors, conversations, dashboards, datasources, insights, llm, notify, oauth, previews, schedules, slackbot, tableacl, versions
 from . import alerts, export, metrics, reports
+from . import audit, audit_api, groups, scim, sso
 from .db import connect, migrate
+from .groups import principals
 from .ingest import drop_tables, ingest_document, ingest_spreadsheet
 from .security import FRONTEND_URL, User, csrf_middleware, current_user, require_admin
 
@@ -39,6 +41,11 @@ app.include_router(metrics.router)
 app.include_router(reports.router)
 app.include_router(alerts.router)
 app.include_router(export.router)
+app.include_router(groups.router)
+app.include_router(sso.router)
+app.include_router(scim.router)
+app.include_router(audit_api.router)
+app.add_middleware(audit.ClientIP)
 
 MAX_UPLOAD = 25 * 1024 * 1024
 DOC_TYPES = (".pdf", ".txt", ".md")
@@ -88,10 +95,12 @@ async def upload(file: UploadFile, visibility: Literal["everyone", "private"] = 
         if name.lower().endswith(SHEET_TYPES):
             tables = ingest_spreadsheet(name, data, user_id=user.id, allowed=[user.email] if visibility == "private" else None)
             previews.save_original(f"{user.id}:{name}", name, data, user.id)  # same identity the tables use
+            audit.record("spreadsheet.upload", user, f"file:{name}", {"tables": [t["table"] for t in tables], "visibility": visibility})
             return {"kind": "tables", "visibility": visibility, "tables": tables}
         if name.lower().endswith(DOC_TYPES):
             doc = ingest_document(name, data, user_id=user.id, allowed=[user.email] if visibility == "private" else None)
             previews.save_original(f"{user.id}:{name}", name, data, user.id)
+            audit.record("document.upload", user, f"document:{doc.get('id')}", {"name": name, "visibility": visibility})
             return {"kind": "document", "visibility": visibility, **doc}
     except ValueError as e:
         raise HTTPException(422, str(e))
@@ -104,8 +113,8 @@ def list_sources(user: User = Depends(current_user)):
         docs = conn.execute(
             "SELECT d.id, d.name, count(c.id), d.created_at, d.uploaded_by = %s, d.allowed IS NOT NULL, d.replaced_at FROM documents d "
             "LEFT JOIN chunks c ON c.document_id = d.id WHERE d.source = 'upload' "
-            "AND (d.allowed IS NULL OR %s = ANY(d.allowed)) GROUP BY d.id ORDER BY d.created_at DESC",
-            (user.id, user.email)).fetchall()
+            "AND (d.allowed IS NULL OR d.allowed && %s::text[]) GROUP BY d.id ORDER BY d.created_at DESC",
+            (user.id, principals(user.email))).fetchall()
         meta = {r[0]: (r[1], r[2], r[3]) for r in conn.execute(
             "SELECT t.name, t.uploaded_by = %s, t.row_count, t.updated_at FROM data_tables t", (user.id,)).fetchall()}
         mine = {n for n, (m, _, _) in meta.items() if m}
@@ -131,6 +140,7 @@ def delete_table(name: str, user: User = Depends(current_user)):
         raise HTTPException(403, "You can only delete spreadsheets you uploaded")
     if ext and ext[0]:
         previews.delete_original(ext[0].split("::")[0])
+    audit.record("spreadsheet.delete", user, f"table:{name}")
     return {"ok": True}
 
 
@@ -144,6 +154,7 @@ def delete_document(doc_id: int, user: User = Depends(current_user)):
     if not deleted:
         raise HTTPException(403, "You can only delete documents you uploaded")
     previews.delete_original(deleted[0])
+    audit.record("document.delete", user, f"document:{doc_id}", {"file": deleted[0]})
     return {"ok": True}
 
 
@@ -199,6 +210,7 @@ def create_connection(body: NewConnection, user: User = Depends(require_admin)):
         conn_id = connectors.create(body.kind, body.name, body.config, creds=creds, user_id=user.id, allowed=body.allowed)
     except (ValueError, KeyError) as e:
         raise HTTPException(422, str(e))
+    audit.record("connection.create", user, f"connection:{conn_id}", {"kind": body.kind, "name": body.name, "allowed": body.allowed})
     connectors.sync_in_background(conn_id)
     return {"id": conn_id}
 
@@ -210,7 +222,7 @@ def sync_connection(conn_id: int, full: bool = False, _: User = Depends(require_
 
 
 @app.put("/api/connections/{conn_id}/access")
-def set_access(conn_id: int, body: Access, _: User = Depends(require_admin)):
+def set_access(conn_id: int, body: Access, admin: User = Depends(require_admin)):
     """Change who can see a source. Takes effect immediately for search and queries (no re-sync needed)."""
     try:
         allowed = connectors.clean_allowed(body.allowed)
@@ -218,6 +230,7 @@ def set_access(conn_id: int, body: Access, _: User = Depends(require_admin)):
         raise HTTPException(422, str(e))
     with connect() as conn:
         conn.execute("UPDATE connections SET allowed = %s WHERE id = %s", (allowed, conn_id))
+    audit.record("connection.access_change", admin, f"connection:{conn_id}", {"allowed": allowed})
     return {"allowed": allowed}
 
 
@@ -229,11 +242,13 @@ def toggle_connection(conn_id: int, enabled: bool, _: User = Depends(require_adm
 
 
 @app.delete("/api/connections/{conn_id}")
-def delete_connection(conn_id: int, _: User = Depends(require_admin)):
+def delete_connection(conn_id: int, admin: User = Depends(require_admin)):
     """Removes the connection, its stored credentials, and everything it indexed (documents and tables)."""
     drop_tables("connection_id = %s", (conn_id,))
     with connect() as conn:
-        conn.execute("DELETE FROM connections WHERE id = %s", (conn_id,))
+        row = conn.execute("DELETE FROM connections WHERE id = %s RETURNING kind, name", (conn_id,)).fetchone()
+    if row:
+        audit.record("connection.delete", admin, f"connection:{conn_id}", {"kind": row[0], "name": row[1]})
     return {"ok": True}
 
 
@@ -244,8 +259,8 @@ def home(user: User = Depends(current_user)):
     with connect() as conn:
         docs = conn.execute(
             "SELECT d.name, d.source FROM documents d LEFT JOIN connections c ON c.id = d.connection_id "
-            "WHERE (d.allowed IS NULL OR %s = ANY(d.allowed)) AND (c.allowed IS NULL OR %s = ANY(c.allowed)) "
-            "ORDER BY d.created_at DESC LIMIT 200", (user.email, user.email)).fetchall()
+            "WHERE (d.allowed IS NULL OR d.allowed && %(p)s::text[]) AND (c.allowed IS NULL OR c.allowed && %(p)s::text[]) "
+            "ORDER BY d.created_at DESC LIMIT 200", {"p": principals(user.email)}).fetchall()
         asked, tiles, users = conn.execute(
             "SELECT (SELECT count(*) FROM runs WHERE user_id = %s), (SELECT count(*) FROM dashboard_tiles WHERE owner_id = %s), "
             "(SELECT count(*) FROM users)", (user.id, user.id)).fetchone()
@@ -302,7 +317,7 @@ def get_ai(_: User = Depends(require_admin)):
 
 
 @app.put("/api/ai")
-def put_ai(body: AISettings, _: User = Depends(require_admin)):
+def put_ai(body: AISettings, admin: User = Depends(require_admin)):
     for provider, key in (body.keys or {}).items():
         if key:  # verify before saving: a typo'd key should fail here, not mid-conversation
             try:
@@ -311,6 +326,8 @@ def put_ai(body: AISettings, _: User = Depends(require_admin)):
                 raise HTTPException(422, f"{llm.PROVIDERS[provider]} rejected that key: {str(e)[:200]}")
     llm.save_settings(body.primary, {k: v.strip() for k, v in (body.models or {}).items() if v.strip()},
                       {k: v.strip() for k, v in (body.keys or {}).items()})
+    audit.record("ai.settings_change", admin, "ai", {"primary": body.primary, "models": body.models,
+                                                    "keys_changed": sorted((body.keys or {}).keys())})  # never the key values
     return llm.ai_settings()
 
 
@@ -347,9 +364,11 @@ async def replace_document(doc_id: int, file: UploadFile, user: User = Depends(c
         raise HTTPException(404, "Document not found")
     _can_change(row[0], user)
     try:
-        return versions.replace_document(doc_id, name, data, user.id)
+        out = versions.replace_document(doc_id, name, data, user.id)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    audit.record("document.replace", user, f"document:{doc_id}", {"name": name})
+    return out
 
 
 @app.post("/api/tables/{table}/replace")
@@ -363,6 +382,8 @@ async def replace_table(table: str, file: UploadFile, user: User = Depends(curre
         raise HTTPException(404, "Spreadsheet not found")
     _can_change(row[0], user)
     try:
-        return versions.replace_spreadsheet(table, name, data, user.id)
+        out = versions.replace_spreadsheet(table, name, data, user.id)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    audit.record("spreadsheet.replace", user, f"table:{table}", {"name": name})
+    return out
