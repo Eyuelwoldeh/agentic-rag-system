@@ -88,11 +88,14 @@ def test_metric_api_and_agent_tools(sales):
     cat = {s["id"]: s for s in ana.get("/api/metrics/catalog").json()}
     assert cat["uploads"]["tables"][table] == COLS and secret not in cat["uploads"]["tables"]
     assert ana.post(f"/api/metrics/{mid}/test").json()["value"] == 2 * 11 * 1000 - 600 + 11 * 500 + 11 * 600
+    pts = ana.get(f"/api/metrics/{mid}/trend").json()["points"]  # monthly series for Home's tiles
+    assert len(pts) == 22 and pts[0] == {"period": "2025-01", "value": 1500} and pts[-1] == {"period": "2026-11", "value": 1000}
 
     # a metric on a sheet the member can't see: hidden from the assistant, and Test fails for them
     cfo = login("ins-cfo@acme.test", "admin")
     sid = cfo.post("/api/metrics", json={**body, "name": "ins Profit", "table_name": secret, "expression": "sum(profit)"}).json()["id"]
     assert ana.post(f"/api/metrics/{sid}/test").status_code == 422
+    assert ana.get(f"/api/metrics/{sid}/trend").status_code == 422
     ctx = tools.Ctx(email="ins-ana@acme.test")
     listed = json.loads(tools.execute("list_metrics", {}, ctx))
     assert "ins Revenue" in [m["name"] for m in listed]
@@ -249,6 +252,8 @@ def test_alert_drop_vs_last_year_notifies_once(sales):
     rows = {r["group"]: r for r in res["rows"]}
     assert res["triggered"] and rows["Riverside"]["change_pct"] == -60.0 and rows["Downtown"]["change_pct"] == 20.0
     assert "Riverside -60.0%" in res["message"] and "Downtown" not in res["message"]
+    stale = alerts.evaluate(a, "alert-owner@acme.test", date(2026, 12, 16))  # the data ends in November: no data isn't a -100% drop
+    assert not stale["triggered"] and "no data yet for December 2026" in stale["message"]
 
     def alerts_for(c):
         return [i for i in c.get("/api/notifications").json()["items"] if i["kind"] == "alert"]

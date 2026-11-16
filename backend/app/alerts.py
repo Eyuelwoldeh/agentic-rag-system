@@ -62,6 +62,9 @@ def evaluate(a: dict, email: str | None, today: date | None = None) -> dict:
         if not m.get("time_column"):
             raise ValueError("Comparing with last year needs a time column")
         cur, prev = values(start, end), values(_last_year(start), _last_year(end))
+        if not cur:  # nothing recorded yet this month (e.g. an uploaded file that ends earlier): no data isn't a 100% drop
+            return {"triggered": False, "rows": [],
+                    "message": f"{a['name']}: no data yet for {start:%B %Y}, so there's nothing to compare with last year"}
         for g in sorted(set(cur) | set(prev)):
             c, p = cur.get(g, 0.0), prev.get(g, 0.0)
             change = round((c - p) / abs(p) * 100, 1) if p else None

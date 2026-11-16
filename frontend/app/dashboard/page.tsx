@@ -43,7 +43,7 @@ export default function Dashboard() {
         {!tiles ? (
           <div className="grid gap-4 xl:grid-cols-2"><Skeleton className="h-72" /><Skeleton className="h-72" /></div>
         ) : shown.length === 0 ? (
-          <div className="rounded border border-line bg-panel">
+          <div className="rounded-md border border-line bg-panel shadow-raised">
             {tab === "mine" ? (
               <EmptyState icon={<LayoutDashboard className="h-6 w-6" />} title="No charts pinned yet"
                 body={<>Ask a numbers question, such as “Show revenue by month for this year”, then select <b>Pin to dashboard</b> on the chart. You can also select <b>Analyze</b> on a spreadsheet in the Library.</>}
@@ -104,7 +104,7 @@ function TileCard({ tile, onChange }: { tile: Tile; onChange: () => void }) {
   return (
     <div className="flex flex-col">
       {data?.no_access ? (
-        <div className="rounded border border-line bg-panel">
+        <div className="rounded-md border border-line bg-panel shadow-raised">
           <p className="border-b border-line px-3 py-2 text-sm font-semibold">{tile.title}</p>
           <div className="flex items-center gap-2 p-4 text-sm text-text2">
             <Status kind="restricted">No access</Status> You don&apos;t have access to the data behind this chart. Ask an administrator if you need it.

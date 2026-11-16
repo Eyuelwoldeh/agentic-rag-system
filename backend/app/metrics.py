@@ -292,3 +292,25 @@ def test_metric(metric_id: int, user: User = Depends(current_user)):
     from .tools import _jsonable
 
     return {"value": _jsonable(res["rows"][0][0]) if res["rows"] else None, "sql": sql}
+
+
+@router.get("/api/metrics/{metric_id}/trend")
+def metric_trend(metric_id: int, user: User = Depends(current_user)):
+    """Last 25 months, computed with the viewer's own access (Home's key-number tiles: latest month vs a year earlier)."""
+    with connect() as conn:
+        row = conn.execute(f"SELECT {COLS} FROM metrics WHERE id = %s", (metric_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Metric not found")
+    m = _row(row)
+    if not m.get("time_column"):
+        return {"points": []}
+    try:
+        _, res = query(m, user.email, period="month")
+    except datasources.AccessDenied as e:
+        raise HTTPException(403, str(e))
+    except Exception as e:
+        raise HTTPException(422, str(e)[:300])
+    from .tools import _jsonable
+
+    points = [{"period": str(_jsonable(p))[:7], "value": _jsonable(v)} for p, v in res["rows"] if p is not None]
+    return {"points": points[-25:]}

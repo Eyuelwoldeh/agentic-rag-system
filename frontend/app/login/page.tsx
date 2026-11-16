@@ -28,7 +28,7 @@ export default function Login() {
     setError("");
     try {
       await apiJson(setup ? "/api/auth/setup" : "/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
-      location.href = "/";
+      location.href = "/home";
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
@@ -39,10 +39,15 @@ export default function Login() {
     <main className="grid min-h-dvh place-items-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex items-center gap-2">
-          <span className="grid h-7 w-7 place-items-center rounded bg-accent text-xs font-semibold text-white" aria-hidden>AR</span>
+          <svg viewBox="0 0 24 24" className="h-7 w-7" aria-hidden>
+            <rect width="24" height="24" rx="5" fill="var(--accent)" />
+            <rect x="5" y="6" width="8" height="2.4" rx="1.2" fill="#fff" opacity="0.65" />
+            <rect x="5" y="10.8" width="11" height="2.4" rx="1.2" fill="#fff" opacity="0.8" />
+            <rect x="5" y="15.6" width="14" height="2.4" rx="1.2" fill="#fff" />
+          </svg>
           <span className="text-base font-semibold">Agentic RAG</span>
         </div>
-        <form onSubmit={submit} className="space-y-5 rounded border border-line bg-panel p-6">
+        <form onSubmit={submit} className="space-y-5 rounded-md border border-line bg-panel p-6 shadow-raised">
           <div>
             <h1 className="text-xl leading-7 font-semibold">{setup ? "Create the administrator account" : "Sign in"}</h1>
             <p className="mt-1 text-sm text-text2">{setup ? "You can add your team after setup." : "Use your work email address."}</p>

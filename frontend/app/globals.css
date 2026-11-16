@@ -30,6 +30,14 @@
   --series-3: #1baf7a;
   --series-4: #eda100;
   --grid: #ebecf0;
+  /* global header (UI shell): deep blue-slate, not black */
+  --shell: #1b2638;
+  --shell-fg: #e8edf4;
+  --shell-muted: #a3b2c7;
+  --shell-hover: #2a3850;
+  /* elevation (Atlassian "raised"): a hairline plus a soft drop, not a blur cloud */
+  --raised: 0 1px 1px rgb(9 30 66 / 0.12), 0 0 1px rgb(9 30 66 / 0.2);
+  --overlay: 0 8px 24px -4px rgb(9 30 66 / 0.25), 0 0 1px rgb(9 30 66 / 0.31);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -57,6 +65,12 @@
     --series-3: #199e70;
     --series-4: #c98500;
     --grid: #2c333a;
+    --shell: #10151c;
+    --shell-fg: #dee4ea;
+    --shell-muted: #8c9bab;
+    --shell-hover: #22272b;
+    --raised: 0 1px 1px rgb(0 0 0 / 0.4), 0 0 1px rgb(0 0 0 / 0.5);
+    --overlay: 0 8px 24px -4px rgb(0 0 0 / 0.6), 0 0 1px rgb(0 0 0 / 0.6);
   }
 }
 
@@ -78,6 +92,12 @@
   --color-warn-weak: var(--warn-weak);
   --color-bad: var(--bad);
   --color-bad-weak: var(--bad-weak);
+  --color-shell: var(--shell);
+  --color-shell-fg: var(--shell-fg);
+  --color-shell-muted: var(--shell-muted);
+  --color-shell-hover: var(--shell-hover);
+  --shadow-raised: var(--raised);
+  --shadow-overlay: var(--overlay);
   --font-sans: var(--font-plex-sans);
   --font-mono: var(--font-plex-mono);
   --radius-DEFAULT: 4px;

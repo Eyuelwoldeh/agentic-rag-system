@@ -37,7 +37,7 @@ export default function Activity() {
     <>
       <PageHeader title="Activity" description={me.role === "admin" ? "Every question asked in your organization, with how each answer was produced." : "Questions you've asked, with how each answer was produced."} />
       <Page wide>
-        <div className="rounded border border-line bg-panel">
+        <div className="rounded-md border border-line bg-panel shadow-raised">
           <div className="border-b border-line p-3">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={me.role === "admin" ? "Search questions or people" : "Search questions"} aria-label="Search activity" className={`${inputCls} max-w-sm`} />
           </div>

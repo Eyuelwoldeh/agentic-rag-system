@@ -155,7 +155,7 @@ function OverflowMenu({ label, items }: { label: string; items: { label: string;
       <summary aria-label={label} title="More actions" className="grid h-7 w-7 cursor-pointer list-none place-items-center rounded text-text2 hover:bg-hover">
         <MoreHorizontal className="h-4 w-4" />
       </summary>
-      <ul role="menu" className="absolute right-0 z-20 mt-1 w-44 rounded border border-line bg-panel py-1 shadow-lg">
+      <ul role="menu" className="absolute right-0 z-20 mt-1 w-44 rounded-md border border-line bg-panel py-1 shadow-overlay">
         {items.map((it) => (
           <li key={it.label} role="none">
             <button role="menuitem" onClick={() => { if (ref.current) ref.current.open = false; it.onClick(); }}

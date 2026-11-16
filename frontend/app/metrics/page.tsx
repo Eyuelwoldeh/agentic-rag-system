@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Play, Plus, Sigma, Trash2 } from "lucide-react";
+import { MessageSquareText, Pencil, Play, Plus, Sigma, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import SortableTable, { type Column } from "@/components/SortableTable";
 import { Button, EmptyState, Field, inputCls, Page, PageHeader, Panel, SidePanel, Skeleton, useUI } from "@/components/ui";
@@ -76,7 +76,9 @@ export default function Metrics() {
     } },
     { key: "actions", label: "", className: "w-1", render: (m) => (
       <span className="flex justify-end gap-1">
-        <Button size="sm" icon={<Play className="h-3.5 w-3.5" />} onClick={() => test(m)} title="Calculate the current value with your access">Test</Button>
+        <Button size="sm" icon={<MessageSquareText className="h-3.5 w-3.5" />} title="Ask the assistant about this metric"
+          onClick={() => { location.href = `/?q=${encodeURIComponent(`How has ${m.name} changed compared with the same period last year, and what's driving it?`)}`; }}>Ask</Button>
+        <Button size="sm" variant="ghost" icon={<Play className="h-3.5 w-3.5" />} onClick={() => test(m)} title="Calculate the current value with your access">Test</Button>
         {admin && <>
           <Button size="sm" variant="ghost" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditing(m)}>Edit</Button>
           <Button size="sm" variant="ghost" aria-label={`Delete ${m.name}`} title="Delete" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => remove(m)} />

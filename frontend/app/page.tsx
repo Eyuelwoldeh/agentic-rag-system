@@ -140,7 +140,11 @@ export default function Ask() {
     const q = new URLSearchParams(location.search);
     const table = q.get("analyze"); // "Analyze" from the Library arrives as ?analyze=<table>&title=<name>
     const c = Number(q.get("c"));
-    if (table) {
+    const question = q.get("q"); // from Home and the ⌘K palette
+    if (question) {
+      history.replaceState(null, "", "/");
+      ask(question);
+    } else if (table) {
       history.replaceState(null, "", "/");
       ask(`Analyze “${q.get("title") ?? table}” and give me the key business insights.`, table);
     } else if (c) open(c);
@@ -182,7 +186,7 @@ export default function Ask() {
   const title = convs.find((c) => c.id === convId)?.title ?? shared.find((c) => c.id === convId)?.title;
 
   return (
-    <div className="flex h-dvh">
+    <div className="flex h-[calc(100dvh-3rem)]">
       {listShown && <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-nav lg:flex">{list}</aside>}
       {historyOpen && <SidePanel title="Conversations" onClose={() => setHistoryOpen(false)}>{list}</SidePanel>}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -256,8 +260,8 @@ function ConversationList({ convs, shared, active, busy, onOpen, onNew, onRename
           {convs.map((c) => (
             <li key={c.id} className="group relative">
               <button onClick={() => !busy && onOpen(c.id)} aria-current={active === c.id ? "page" : undefined}
-                className={`block w-full rounded px-2.5 py-2 pr-14 text-left ${active === c.id ? "bg-accent-weak" : "hover:bg-hover"}`}>
-                <span className={`block truncate text-sm ${active === c.id ? "font-medium text-accent" : ""}`}>{c.title}</span>
+                className={`block w-full rounded px-2.5 py-2 text-left group-focus-within:pr-14 group-hover:pr-14 ${active === c.id ? "bg-accent-weak" : "hover:bg-hover"}`}>
+                <span className={`line-clamp-2 text-sm ${active === c.id ? "font-medium text-accent" : ""}`}>{c.title}</span>
                 <span className="block text-xs text-muted">{ago(c.updated_at)}</span>
               </button>
               <span className="absolute top-2 right-1.5 hidden gap-0.5 group-focus-within:flex group-hover:flex">
@@ -376,10 +380,13 @@ function NoAINotice() {
 }
 
 function Start({ home, onAsk }: { home: Home | null; onAsk: (q: string) => void }) {
-  const remaining = home?.checklist.filter((c) => !c.done) ?? [];
   return (
-    <div className="space-y-6">
-      <section className="rounded border border-line bg-panel">
+    <div className="space-y-6 pt-6">
+      <div>
+        <h2 className="text-2xl leading-8 font-semibold tracking-[-0.01em]">What do you want to know?</h2>
+        <p className="mt-1 text-sm text-text2">Ask in plain language. Answers cite their sources, and a second check verifies every number before you see it.</p>
+      </div>
+      <section className="rounded-md border border-line bg-panel shadow-raised">
         <h2 className="border-b border-line px-4 py-3 text-sm font-semibold">Suggested questions</h2>
         {home && home.suggestions.length > 0 ? (
           <ul>
@@ -400,19 +407,6 @@ function Start({ home, onAsk }: { home: Home | null; onAsk: (q: string) => void 
         )}
       </section>
 
-      {remaining.length > 0 && home && (
-        <section className="rounded border border-line bg-panel">
-          <h2 className="border-b border-line px-4 py-3 text-sm font-semibold">Set up your workspace</h2>
-          <ul className="divide-y divide-line">
-            {home.checklist.map((c) => (
-              <li key={c.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                {c.done ? <Status kind="success">Done</Status> : <Status kind="neutral">To do</Status>}
-                <span className={c.done ? "text-muted" : ""}>{c.label}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
   );
 }
@@ -435,7 +429,7 @@ function ExportMenu({ id }: { id: number }) {
       <summary className="inline-flex h-8 cursor-pointer list-none items-center gap-1.5 rounded border border-line bg-panel px-3 text-sm font-medium hover:bg-hover">
         <Download className="h-4 w-4" aria-hidden />Export<ChevronDown className="h-3.5 w-3.5" aria-hidden />
       </summary>
-      <div className="absolute right-0 z-20 mt-1 w-40 rounded border border-line bg-panel py-1 shadow-lg">
+      <div className="absolute right-0 z-20 mt-1 w-40 rounded-md border border-line bg-panel py-1 shadow-overlay">
         {link("pdf", "PDF document")}
         {link("md", "Markdown")}
       </div>
@@ -457,7 +451,7 @@ function ScheduleButton({ question }: { question: string }) {
 function AnswerView({ m, readOnly, question }: { m: Assistant; readOnly?: boolean; question: string }) {
   const critic = [...m.steps].reverse().find((s) => s.type === "critic");
   return (
-    <article className="rounded border border-line bg-panel">
+    <article className="rounded-md border border-line bg-panel shadow-raised">
       <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
         <h2 className="text-sm font-semibold">Answer</h2>
         {m.pending ? <Status kind="running">Working</Status>
