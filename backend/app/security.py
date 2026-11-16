@@ -122,7 +122,7 @@ def require_admin(user: User = Depends(current_user)) -> User:
 # Requiring a custom header forces a CORS preflight, which only our frontend origin passes.
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-CSRF_EXEMPT = ("/api/oauth/",)  # provider redirects are top-level GETs anyway; listed for clarity
+CSRF_EXEMPT = ("/api/oauth/", "/api/slack/events")  # OAuth: top-level GETs anyway. Slack events: verified by signing secret
 
 
 async def csrf_middleware(request: Request, call_next):

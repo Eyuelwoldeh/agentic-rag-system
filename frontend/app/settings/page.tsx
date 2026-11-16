@@ -8,12 +8,12 @@ import { api, apiJson } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { ago } from "@/lib/time";
 
-type Tab = "ai" | "team" | "apps" | "account";
+type Tab = "ai" | "team" | "apps" | "notifications" | "slack" | "account";
 
 export default function Settings() {
   const me = useMe()!;
   const admin = me.role === "admin";
-  const tabs: [Tab, string][] = admin ? [["ai", "AI model"], ["team", "Team"], ["apps", "Sign-in apps"], ["account", "Your account"]] : [["account", "Your account"]];
+  const tabs: [Tab, string][] = admin ? [["ai", "AI model"], ["team", "Team"], ["apps", "Sign-in apps"], ["notifications", "Notifications"], ["slack", "Slack bot"], ["account", "Your account"]] : [["account", "Your account"]];
   const [tab, setTab] = useState<Tab>(tabs[0][0]);
   return (
     <>
@@ -32,6 +32,8 @@ export default function Settings() {
         {tab === "ai" && <AIModel />}
         {tab === "team" && <Team myId={me.id} />}
         {tab === "apps" && <OAuthApps />}
+        {tab === "notifications" && <NotificationSettings />}
+        {tab === "slack" && <SlackBot />}
         {tab === "account" && <Account email={me.email} role={me.role} />}
       </Page>
     </>
@@ -318,5 +320,114 @@ function AppForm({ app, onSaved }: { app: OAuthApp; onSaved: () => void }) {
       </div>
       <Button variant="primary" type="submit">Save</Button>
     </form>
+  );
+}
+
+/* ---------- notifications ---------- */
+
+function NotificationSettings() {
+  const { toast } = useUI();
+  const [s, setS] = useState<{ document_updates: boolean } | null>(null);
+  useEffect(() => {
+    apiJson<{ document_updates: boolean }>("/api/settings/notifications").then(setS);
+  }, []);
+  if (!s) return null;
+  async function toggle(document_updates: boolean) {
+    try {
+      setS(await apiJson("/api/settings/notifications", { method: "PUT", body: JSON.stringify({ document_updates }) }));
+      toast("Notification settings saved.");
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  }
+  return (
+    <Panel title="Notifications" description="People always get notified when someone shares a conversation with them or mentions them in a comment.">
+      <label className="flex items-start gap-3 text-sm">
+        <input type="checkbox" className="mt-0.5" checked={s.document_updates} onChange={(e) => toggle(e.target.checked)} />
+        <span>
+          <span className="block font-medium">Notify people when documents they can see are updated</span>
+          <span className="block text-xs text-muted">When a file in the Library is replaced, everyone with access gets a notification with a summary of what changed.</span>
+        </span>
+      </label>
+    </Panel>
+  );
+}
+
+/* ---------- Slack bot ---------- */
+
+type SlackState = { signing_secret: boolean; bot_token: boolean; request_url: string; scopes: string[] };
+
+function SlackBot() {
+  const { confirm, toast } = useUI();
+  const [s, setS] = useState<SlackState | null>(null);
+  const [secret, setSecret] = useState("");
+  const [token, setToken] = useState("");
+  useEffect(() => {
+    apiJson<SlackState>("/api/slack/settings").then(setS);
+  }, []);
+  if (!s) return null;
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      setS(await apiJson("/api/slack/settings", { method: "PUT", body: JSON.stringify({ signing_secret: secret, bot_token: token }) }));
+      setSecret("");
+      setToken("");
+      toast("Slack bot settings saved.");
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  }
+  async function remove() {
+    if (!(await confirm({ title: "Turn off the Slack bot?", action: "Remove", danger: true, body: "The stored signing secret and bot token are deleted. The bot stops answering in Slack." }))) return;
+    setS(await apiJson("/api/slack/settings", { method: "DELETE" }));
+    toast("Slack bot removed.");
+  }
+  const ready = s.signing_secret && s.bot_token;
+  const copy = (text: string, what: string) => navigator.clipboard.writeText(text).then(() => toast(`${what} copied.`));
+
+  return (
+    <div className="space-y-4">
+      <p className="max-w-3xl text-sm text-text2">
+        People can mention the bot in a channel or send it a direct message to ask a question. Each answer uses only what that person can see here,
+        matched by their Slack email address. People without an account are asked to contact an administrator.
+      </p>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Panel title="Set up in Slack" actions={ready ? <Status kind="success">Connected</Status> : <Status kind="neutral">Not set up</Status>}>
+          <ol className="list-decimal space-y-2 pl-5 text-sm text-text2">
+            <li>Go to <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-accent underline">api.slack.com/apps<ExternalLink className="h-3 w-3" /></a>, select <b>Create New App</b>, then <b>From scratch</b>, and pick your workspace.</li>
+            <li>Under <b>OAuth &amp; Permissions</b>, add these bot token scopes: <code className="font-mono text-xs text-foreground">{s.scopes.join(", ")}</code></li>
+            <li>Select <b>Install to Workspace</b>, then copy the <b>Bot User OAuth Token</b> (starts with xoxb-).</li>
+            <li>Under <b>Basic Information</b>, copy the <b>Signing Secret</b>.</li>
+            <li className="space-y-1">
+              <span>Under <b>Event Subscriptions</b>, turn events on and paste this Request URL (save the secret here first so Slack can verify it):</span>
+              <span className="flex flex-wrap items-center gap-2">
+                <code className="rounded bg-hover px-2 py-1 font-mono text-xs break-all text-foreground">{s.request_url}</code>
+                <Button type="button" size="sm" variant="ghost" icon={<Copy className="h-3.5 w-3.5" />} onClick={() => copy(s.request_url, "Request URL")}>Copy</Button>
+              </span>
+            </li>
+            <li>Subscribe to the bot events <code className="font-mono text-xs text-foreground">app_mention</code> and <code className="font-mono text-xs text-foreground">message.im</code>, then save.</li>
+            <li>Under <b>App Home</b>, allow people to send messages to the app. Invite the bot to channels with /invite.</li>
+          </ol>
+          {!s.request_url.startsWith("https://") && (
+            <p className="mt-3 text-xs text-muted">Slack needs a public https address. Set PUBLIC_URL to your deployed address or a tunnel.</p>
+          )}
+        </Panel>
+        <Panel title="Credentials" description="Stored encrypted and never shown again. Leave a field blank to keep the saved value.">
+          <form onSubmit={save} className="space-y-4">
+            <Field label="Signing secret" helper={s.signing_secret ? "Saved." : "Basic Information, App Credentials."}>
+              <input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} className={`${inputCls} font-mono`} />
+            </Field>
+            <Field label="Bot token" helper={s.bot_token ? "Saved." : "OAuth & Permissions, Bot User OAuth Token."}>
+              <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="xoxb-…" className={`${inputCls} font-mono`} />
+            </Field>
+            <div className="flex gap-2">
+              <Button variant="primary" type="submit" disabled={!secret.trim() && !token.trim()}>Save</Button>
+              {(s.signing_secret || s.bot_token) && <Button type="button" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={remove}>Remove</Button>}
+            </div>
+          </form>
+        </Panel>
+      </div>
+    </div>
   );
 }

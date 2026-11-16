@@ -4,6 +4,7 @@ import { LayoutDashboard, Pencil, RefreshCw, Share2, Trash2 } from "lucide-react
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Chart, { type ChartSpec } from "@/components/Chart";
+import Comments from "@/components/Comments";
 import { Button, EmptyState, Page, PageHeader, Skeleton, Status, useUI } from "@/components/ui";
 import { api, apiJson } from "@/lib/api";
 import { useMe } from "@/lib/me";
@@ -131,6 +132,7 @@ function TileCard({ tile, onChange }: { tile: Tile; onChange: () => void }) {
           {canEdit && <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={remove}>Remove</Button>}
         </span>
       </div>
+      <Comments targetType="tile" targetId={tile.id} className="mt-2 rounded border border-line bg-panel" />
     </div>
   );
 }
