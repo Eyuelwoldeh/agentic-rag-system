@@ -37,6 +37,22 @@ cd frontend && npm install && npm run dev   # http://localhost:3000
 
 Try it with the sample files in `backend/evals/sample/` (upload them in the UI).
 
+### Background jobs
+
+Connector syncs, the periodic re-sync and the daily retention cleanup run as jobs in a Postgres queue (`jobs` table, `app/jobs.py`).
+By default (`WORKER_MODE=inline`) the API processes them itself, so dev needs nothing extra. In production set `WORKER_MODE=external`
+on the API and run one or more workers: `cd backend && uv run python -m app.worker`. Admins see recent jobs under Settings, Data and retention.
+
+### Deploy
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build   # db, api, worker, web
+```
+
+Required in `.env.prod`: `POSTGRES_PASSWORD`, `SECRETS_KEY`, `PUBLIC_URL` (API URL, baked into the web build), `FRONTEND_URL`.
+The other variables are listed at the top of `docker-compose.prod.yml`. Migrations run when the API or worker starts.
+`GET /api/health` (no sign-in) reports database reachability, applied migrations, worker heartbeat age and version.
+
 ## AI providers
 
 Admins pick **Claude** or **ChatGPT** in **Settings → AI model** and paste API keys there. Keys are verified before saving, stored encrypted and never shown again; the model list comes from the provider. The main provider is used first. If it's out of credits or its key fails, the other takes over automatically, and with neither available the app still answers with search results and calculated spreadsheet insights. Web search, code execution and MCP apps are Claude-only.
@@ -122,6 +138,8 @@ uv run python -m evals.run_evals     # 7 graded questions over the sample corpus
 Change a prompt, the model, retrieval or the critic, then re-run the evals to see whether accuracy moved.
 
 ## Config (`.env`)
+
+`WORKER_MODE` (`inline` default, or `external`), `WORKER_CONCURRENCY` (jobs at once per process, default 2), `DB_POOL_MIN` / `DB_POOL_MAX` (database connections per process, default 1 / 10).
 
 `AGENT_MODEL` (default `claude-opus-5-5`), `CRITIC_MODEL` (default `claude-haiku-5-5`), `AGENT_EFFORT` (`low|medium|high`, default `medium`).
 Refused requests fall back to another model automatically (`fallbacks: "default"`). If Claude is unreachable (out of credits, bad key) or `AGENT_MODE=search` is set, the app falls back to **search-only mode**: it returns the top cited passages without writing an answer.

@@ -1,9 +1,12 @@
 import os
+import threading
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import psycopg
 from dotenv import load_dotenv
 from pgvector.psycopg import register_vector
+from psycopg_pool import ConnectionPool
 
 load_dotenv(Path(__file__).parents[2] / ".env")
 
@@ -12,11 +15,30 @@ READER_DATABASE_URL = os.environ["READER_DATABASE_URL"]
 MIGRATIONS = Path(__file__).parents[2] / "db" / "migrations"
 
 
-def connect() -> psycopg.Connection:
-    # ponytail: connection per call; add psycopg_pool if request volume grows
-    conn = psycopg.connect(DATABASE_URL, autocommit=True)
-    register_vector(conn)
-    return conn
+POOL_MIN = int(os.getenv("DB_POOL_MIN", "1"))
+POOL_MAX = int(os.getenv("DB_POOL_MAX", "10"))
+_pool: ConnectionPool | None = None
+_pool_lock = threading.Lock()
+
+
+def _reset(conn: psycopg.Connection) -> None:
+    conn.autocommit = True  # a caller may have flipped it; every pooled connection starts autocommit
+
+
+def pool() -> ConnectionPool:
+    """Created on first use (after migrations, so the vector type exists for register_vector)."""
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ConnectionPool(DATABASE_URL, min_size=POOL_MIN, max_size=POOL_MAX, kwargs={"autocommit": True},
+                                   configure=register_vector, reset=_reset, check=ConnectionPool.check_connection,
+                                   name="app", open=True)
+        return _pool
+
+
+def connect() -> AbstractContextManager[psycopg.Connection]:
+    """`with connect() as conn:` borrows an autocommit connection from the pool and returns it afterwards."""
+    return pool().connection()
 
 
 def connect_reader() -> psycopg.Connection:

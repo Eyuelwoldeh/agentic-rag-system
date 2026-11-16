@@ -7,15 +7,16 @@ import { Button, Field, inputCls, Page, PageHeader, Panel, Status, useUI } from 
 import { api, apiJson } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { ago } from "@/lib/time";
+import DataRetention from "./data";
 import { Groups, SingleSignOn } from "./identity";
 
-type Tab = "ai" | "team" | "groups" | "sso" | "apps" | "notifications" | "slack" | "account";
+type Tab = "ai" | "team" | "groups" | "sso" | "apps" | "notifications" | "slack" | "data" | "account";
 
 export default function Settings() {
   const me = useMe()!;
   const admin = me.role === "admin";
   const tabs: [Tab, string][] = admin ? [["ai", "AI model"], ["team", "Team"], ["groups", "Groups"], ["sso", "Single sign-on"], ["apps", "Sign-in apps"],
-    ["notifications", "Notifications"], ["slack", "Slack bot"], ["account", "Your account"]] : [["account", "Your account"]];
+    ["notifications", "Notifications"], ["slack", "Slack bot"], ["data", "Data and retention"], ["account", "Your account"]] : [["account", "Your account"]];
   const [tab, setTab] = useState<Tab>(tabs[0][0]);
   return (
     <>
@@ -38,6 +39,7 @@ export default function Settings() {
         {tab === "apps" && <OAuthApps />}
         {tab === "notifications" && <NotificationSettings />}
         {tab === "slack" && <SlackBot />}
+        {tab === "data" && <DataRetention />}
         {tab === "account" && <Account email={me.email} role={me.role} />}
       </Page>
     </>

@@ -10,7 +10,7 @@ from collections.abc import Iterator
 import anthropic
 import openai
 
-from . import tools
+from . import limits, tools
 from .db import connect
 from .security import decrypt, encrypt
 
@@ -61,25 +61,29 @@ def save_settings(primary: str | None = None, models: dict | None = None, keys: 
 
 
 def list_models(provider: str, key: str | None = None) -> list[str]:
-    """Models this key can use (also proves the key works)."""
+    """Models this key can use and the admin allows (also proves the key works)."""
     key = key or api_key(provider)
     if not key:
         raise ValueError(f"No {PROVIDERS[provider]} API key set")
+    lim = limits.settings()
     if provider == "anthropic":
-        return [m.id for m in anthropic.Anthropic(api_key=key).models.list(limit=100)]
-    skip = ("audio", "realtime", "tts", "transcribe", "image", "search", "embedding", "moderation", "whisper", "dall-e", "codex")
-    ids = [m.id for m in openai.OpenAI(api_key=key).models.list()]
-    return sorted((i for i in ids if i.startswith(("gpt-", "o")) and not any(s in i for s in skip)), reverse=True)
+        ids = [m.id for m in anthropic.Anthropic(api_key=key).models.list(limit=100)]
+    else:
+        skip = ("audio", "realtime", "tts", "transcribe", "image", "search", "embedding", "moderation", "whisper", "dall-e", "codex")
+        ids = sorted((i for i in (m.id for m in openai.OpenAI(api_key=key).models.list())
+                      if i.startswith(("gpt-", "o")) and not any(s in i for s in skip)), reverse=True)
+    return [i for i in ids if limits.model_allowed(provider, i, lim)]
 
 
 def providers() -> list["Provider"]:
-    """Configured providers, primary first."""
+    """Configured providers, primary first. A provider set to a model the admin hasn't allowed is not used."""
     s = ai_settings()
+    lim = limits.settings()
     order = [s["primary"]] + [p for p in PROVIDERS if p != s["primary"]]
     out = []
     for p in order:
         key = api_key(p)
-        if key:
+        if key and limits.model_allowed(p, s["models"][p], lim):
             out.append((AnthropicProvider if p == "anthropic" else OpenAIProvider)(key, s["models"][p]))
     return out
 

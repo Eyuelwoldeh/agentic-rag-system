@@ -6,11 +6,11 @@ whoami(creds) -> account label, and fetch(config, since, creds) -> Iterator[Doc]
 import json
 import os
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 
+from .. import jobs, schedules
 from ..db import connect
-from ..ingest import upsert_document
+from ..ingest import drop_tables, upsert_document
 from ..security import encrypt
 from . import (bigquery, confluence, gdrive, github, hubspot, jira, mcp, microsoft365, notion, postgres, quickbooks, salesforce,
                shopify, slack, snowflake, square, stripe, web, xero)
@@ -63,11 +63,14 @@ def parse_paste(kind: str, text: str) -> dict:
 
 
 def is_running(conn_id: int) -> bool:
-    return conn_id in _running
+    """Queued or syncing (in this process or any worker)."""
+    return conn_id in _running or jobs.is_active(f"connector.sync:{conn_id}")
 
 
 def sync(conn_id: int, full: bool = False) -> None:
-    """Pull changed items from one connection into the index. Safe to call concurrently (second call is a no-op)."""
+    """Pull changed items from one connection into the index. Safe to call concurrently (second call is a no-op).
+
+    A full sync (or the first one) also removes documents and tables the source no longer has."""
     with _lock:
         if conn_id in _running:
             return
@@ -82,6 +85,7 @@ def sync(conn_id: int, full: bool = False) -> None:
             conn.execute("UPDATE connections SET status = 'syncing', error = NULL WHERE id = %s", (conn_id,))
         kind, config, last = row
         module = REGISTRY[kind]
+        creds = load_credentials(conn_id)
         if kind == "mcp":
             account = module.verify(config, load_credentials(conn_id))
             with connect() as conn:
@@ -96,18 +100,20 @@ def sync(conn_id: int, full: bool = False) -> None:
                 conn.execute("UPDATE connections SET status = %s, last_synced_at = now() WHERE id = %s",
                              (f"live · {n} tables", conn_id))
             return
-        creds = load_credentials(conn_id)
         if needs_auth(kind) and not creds:
             raise RuntimeError("Not connected: no credentials stored. Remove and reconnect this source.")
         started = datetime.now(timezone.utc)
         since = None if full or not last else last - OVERLAP
         n = 0
+        seen_docs, seen_tables = [], []
         for doc in module.fetch(config, since, creds):
+            seen_docs.append(doc.external_id)
             if doc.table_file:
                 from ..ingest import ingest_spreadsheet
                 try:
-                    ingest_spreadsheet(doc.table_file[0], doc.table_file[1], allowed=doc.allowed, source=kind,
-                                       connection_id=conn_id, identity=doc.external_id)
+                    seen_tables += [t["external_id"] for t in ingest_spreadsheet(
+                        doc.table_file[0], doc.table_file[1], allowed=doc.allowed, source=kind,
+                        connection_id=conn_id, identity=doc.external_id)]
                 except ValueError:
                     pass  # empty sheet
             pages = doc.pages or [(1, f"{doc.title}\n\n{doc.text}")]
@@ -117,9 +123,10 @@ def sync(conn_id: int, full: bool = False) -> None:
                 n += 1
             except ValueError:
                 pass  # no extractable text
+        removed = remove_unseen(conn_id, seen_docs, seen_tables) if since is None else 0
         with connect() as conn:
             conn.execute("UPDATE connections SET status = %s, last_synced_at = %s WHERE id = %s",
-                         (f"ok, {n} updated", started, conn_id))
+                         (f"ok, {n} updated" + (f", {removed} removed" if removed else ""), started, conn_id))
     except Exception as e:
         with connect() as conn:
             conn.execute("UPDATE connections SET status = 'error', error = %s WHERE id = %s", (str(e)[:2000], conn_id))
@@ -127,32 +134,45 @@ def sync(conn_id: int, full: bool = False) -> None:
         _running.discard(conn_id)
 
 
-def sync_in_background(conn_id: int, full: bool = False) -> None:
-    threading.Thread(target=sync, args=(conn_id, full), daemon=True, name=f"sync-{conn_id}").start()
-
-
-def sync_all() -> None:
+def remove_unseen(conn_id: int, seen_docs: list[str], seen_tables: list[str]) -> int:
+    """After a full sync: delete this connection's documents and tables the source didn't return."""
+    if not seen_docs:  # an empty listing is more likely an API hiccup or lost access than a source emptied out
+        return 0
     with connect() as conn:
-        ids = [r[0] for r in conn.execute("SELECT id, kind FROM connections WHERE enabled ORDER BY id").fetchall()
-               if r[1] in REGISTRY and not is_live(r[1])]
-    for i in ids:
-        sync(i)
+        n = conn.execute("DELETE FROM documents WHERE connection_id = %s AND NOT (external_id = ANY(%s))",
+                         (conn_id, seen_docs)).rowcount
+    return n + drop_tables("connection_id = %s AND NOT (external_id = ANY(%s))", (conn_id, seen_tables))
 
 
-def start_scheduler() -> None:
-    """Background loop: sync every enabled connection every SYNC_INTERVAL_MINUTES (0 disables)."""
+def sync_in_background(conn_id: int, full: bool = False) -> None:
+    """Queue a sync job (one per connection at a time; a request while one is queued or running is dropped)."""
+    jobs.enqueue("connector.sync", {"id": conn_id, "full": full}, dedupe_key=f"connector.sync:{conn_id}", max_attempts=1)
+
+
+@jobs.handler("connector.sync")
+def _sync_job(payload: dict) -> None:
+    sync(payload["id"], payload.get("full", False))
+    with connect() as conn:
+        row = conn.execute("SELECT status, error FROM connections WHERE id = %s", (payload["id"],)).fetchone()
+    if row and row[0] == "error":  # sync() records errors on the connection; also fail the job so it shows in Settings
+        raise RuntimeError(row[1])
+
+
+@schedules.every_minute
+def enqueue_due_syncs() -> None:
+    """Queue a sync for every enabled indexed connection not synced (or attempted) in SYNC_INTERVAL_MINUTES (0 disables)."""
     if SYNC_INTERVAL_MIN <= 0:
         return
-
-    def loop():
-        while True:
-            time.sleep(SYNC_INTERVAL_MIN * 60)
-            try:
-                sync_all()
-            except Exception as e:  # never let the scheduler die
-                print(f"scheduler: {e}")
-
-    threading.Thread(target=loop, daemon=True, name="connector-sync").start()
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT c.id, c.kind FROM connections c WHERE c.enabled "
+            "AND (c.last_synced_at IS NULL OR c.last_synced_at < now() - make_interval(mins => %s)) "
+            "AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.dedupe_key = 'connector.sync:' || c.id "
+            "  AND j.created_at > now() - make_interval(mins => %s)) ORDER BY c.id",
+            (SYNC_INTERVAL_MIN, SYNC_INTERVAL_MIN)).fetchall()
+    for conn_id, kind in rows:
+        if kind in REGISTRY and not is_live(kind):
+            sync_in_background(conn_id)
 
 
 def clean_config(kind: str, config: dict) -> dict:

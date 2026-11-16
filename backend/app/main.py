@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import agent, auth, comments, connectors, conversations, dashboards, datasources, insights, llm, notify, oauth, previews, schedules, slackbot, tableacl, versions
+from . import agent, auth, comments, connectors, conversations, dashboards, datasources, insights, limits, llm, notify, oauth, ops, previews, slackbot, tableacl, versions, worker
 from . import alerts, export, metrics, reports
 from . import audit, audit_api, groups, scim, sso
 from .db import connect, migrate
@@ -19,8 +19,7 @@ from .security import FRONTEND_URL, User, csrf_middleware, current_user, require
 @asynccontextmanager
 async def lifespan(_app):
     migrate()
-    connectors.start_scheduler()
-    schedules.start()
+    worker.start()  # WORKER_MODE=inline (default): jobs and periodic work run in this process
     yield
 
 
@@ -45,6 +44,7 @@ app.include_router(groups.router)
 app.include_router(sso.router)
 app.include_router(scim.router)
 app.include_router(audit_api.router)
+app.include_router(ops.router)
 app.add_middleware(audit.ClientIP)
 
 MAX_UPLOAD = 25 * 1024 * 1024
@@ -68,6 +68,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 def chat(req: ChatRequest, user: User = Depends(current_user)):
+    limits.check(user)  # 429 when over the daily AI budget or the questions-per-minute limit
     if req.conversation_id:
         conversations.owned(req.conversation_id, user)  # 404 for someone else's conversation
         conv_id, history = req.conversation_id, conversations.history(req.conversation_id)  # server-side context
@@ -318,6 +319,9 @@ def get_ai(_: User = Depends(require_admin)):
 
 @app.put("/api/ai")
 def put_ai(body: AISettings, admin: User = Depends(require_admin)):
+    for provider, model in (body.models or {}).items():
+        if model.strip() and not limits.model_allowed(provider, model.strip()):
+            raise HTTPException(422, f"{model.strip()} isn't on the allowed models list (Settings, Data and retention)")
     for provider, key in (body.keys or {}).items():
         if key:  # verify before saving: a typo'd key should fail here, not mid-conversation
             try:

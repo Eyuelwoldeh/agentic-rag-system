@@ -4,12 +4,10 @@
     @schedules.every_minute
     def run_due_reports(): ...
 
-Today a background thread in the API process calls them; a dedicated worker can call `tick()` instead.
+The worker (app/worker.py) calls `tick()` once a minute: inside the API with WORKER_MODE=inline, else in `python -m app.worker`.
+Keep these quick (e.g. queue a job with app/jobs.py); slow work belongs in a job.
 """
 import logging
-import os
-import threading
-import time
 
 log = logging.getLogger("schedules")
 PERIODIC: list = []
@@ -26,15 +24,3 @@ def tick() -> None:
             fn()
         except Exception as e:  # one failing job must not stop the others
             log.warning("periodic %s failed: %s", getattr(fn, "__name__", fn), e)
-
-
-def start() -> None:
-    if os.getenv("SCHEDULES_DISABLED") == "1":
-        return
-
-    def loop():
-        while True:
-            time.sleep(60)
-            tick()
-
-    threading.Thread(target=loop, daemon=True, name="schedules").start()
