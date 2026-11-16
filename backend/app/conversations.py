@@ -1,7 +1,8 @@
-"""Saved conversations: list, open, rename, delete. Each person only ever sees their own."""
+"""Saved conversations: list, open, rename, delete, share read-only, fork. Private to their owner unless shared."""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from . import audit, notify
 from .db import connect
 from .security import User, current_user
 
@@ -46,9 +47,32 @@ def list_conversations(user: User = Depends(current_user)):
     return [{"id": r[0], "title": r[1], "updated_at": r[2], "questions": r[3]} for r in rows]
 
 
+SHARED_WITH = "EXISTS (SELECT 1 FROM conversation_shares s WHERE s.conversation_id = c.id AND (s.user_id IS NULL OR s.user_id = %s))"
+
+
+def viewable(conversation_id: int, user: User) -> dict:
+    """Owner, or someone it's shared with (directly or with everyone). shared_by is set for viewers."""
+    with connect() as conn:
+        row = conn.execute(f"SELECT c.id, c.title, c.created_at, c.updated_at, c.user_id, u.email FROM conversations c "
+                           f"JOIN users u ON u.id = c.user_id WHERE c.id = %s AND (c.user_id = %s OR {SHARED_WITH})",
+                           (conversation_id, user.id, user.id)).fetchone()
+    if not row:
+        raise HTTPException(404, "Conversation not found")
+    return {"id": row[0], "title": row[1], "created_at": row[2], "updated_at": row[3],
+            "shared_by": None if row[4] == user.id else row[5]}
+
+
+@router.get("/api/shared-conversations")
+def shared_with_me(user: User = Depends(current_user)):
+    with connect() as conn:
+        rows = conn.execute(f"SELECT c.id, c.title, c.updated_at, u.email FROM conversations c JOIN users u ON u.id = c.user_id "
+                            f"WHERE c.user_id <> %s AND {SHARED_WITH} ORDER BY c.updated_at DESC LIMIT 100", (user.id, user.id)).fetchall()
+    return [{"id": r[0], "title": r[1], "updated_at": r[2], "shared_by": r[3]} for r in rows]
+
+
 @router.get("/api/conversations/{conversation_id}")
 def get_conversation(conversation_id: int, user: User = Depends(current_user)):
-    conv = owned(conversation_id, user)
+    conv = viewable(conversation_id, user)
     with connect() as conn:
         rows = conn.execute("SELECT id, question, answer, display, latency_ms, attempts, critic, feedback, input_tokens, output_tokens "
                             "FROM runs WHERE conversation_id = %s ORDER BY id", (conversation_id,)).fetchall()
@@ -59,7 +83,7 @@ def get_conversation(conversation_id: int, user: User = Depends(current_user)):
                         and critic.get("hallucination_risk") != "high")
         turns.append({"run_id": rid, "question": q, "answer": a or "", "sources": d.get("sources", []), "charts": d.get("charts", []),
                       "steps": d.get("steps", []), "memory": d.get("memory", ""), "latency_ms": latency, "attempts": attempts,
-                      "verified": verified, "feedback": feedback, "input_tokens": tin, "output_tokens": tout})
+                      "verified": verified, "feedback": None if conv["shared_by"] else feedback, "input_tokens": tin, "output_tokens": tout})
     return {**conv, "turns": turns}
 
 
@@ -82,3 +106,57 @@ def delete_conversation(conversation_id: int, user: User = Depends(current_user)
     with connect() as conn:
         conn.execute("DELETE FROM conversations WHERE id = %s", (conversation_id,))
     return {"ok": True}
+
+
+# ---------- sharing (read-only) ----------
+
+class Shares(BaseModel):
+    everyone: bool = False
+    user_ids: list[int] = Field(default_factory=list, max_length=500)
+
+
+@router.get("/api/conversations/{conversation_id}/shares")
+def get_shares(conversation_id: int, user: User = Depends(current_user)):
+    owned(conversation_id, user)
+    with connect() as conn:
+        shared = [r[0] for r in conn.execute("SELECT user_id FROM conversation_shares WHERE conversation_id = %s", (conversation_id,)).fetchall()]
+        people = conn.execute("SELECT id, email FROM users WHERE id <> %s ORDER BY email", (user.id,)).fetchall()
+    return {"everyone": None in shared, "user_ids": [i for i in shared if i is not None],
+            "people": [{"id": r[0], "email": r[1]} for r in people]}
+
+
+@router.put("/api/conversations/{conversation_id}/shares")
+def set_shares(conversation_id: int, body: Shares, user: User = Depends(current_user)):
+    conv = owned(conversation_id, user)
+    with connect() as conn, conn.transaction():
+        valid = {r[0] for r in conn.execute("SELECT id FROM users WHERE id = ANY(%s) AND id <> %s", (body.user_ids, user.id)).fetchall()}
+        want = valid | ({None} if body.everyone else set())
+        have = {r[0] for r in conn.execute("SELECT user_id FROM conversation_shares WHERE conversation_id = %s", (conversation_id,)).fetchall()}
+        added, removed = want - have, have - want
+        if removed:
+            conn.execute("DELETE FROM conversation_shares WHERE conversation_id = %s AND coalesce(user_id, 0) = ANY(%s)",
+                         (conversation_id, [i or 0 for i in removed]))
+        for i in added:
+            conn.execute("INSERT INTO conversation_shares (conversation_id, user_id, shared_by) VALUES (%s, %s, %s)",
+                         (conversation_id, i, user.id))
+    target = f"conversation:{conversation_id}"
+    for i in added:
+        audit.record("conversation.share", user, target, {"with": "everyone" if i is None else i})
+    for i in removed:
+        audit.record("conversation.unshare", user, target, {"with": "everyone" if i is None else i})
+    if added:
+        recipients = [u for u in notify.users_who_can_see(None) if u != user.id] if None in added else [i for i in added if i]
+        notify.notify(recipients, "share", f"{user.email} shared a conversation with you", conv["title"], f"/?c={conversation_id}")
+    return get_shares(conversation_id, user)
+
+
+@router.post("/api/conversations/{conversation_id}/fork")
+def fork_conversation(conversation_id: int, user: User = Depends(current_user)):
+    """Copy a conversation shared with you into a new one you own, so you can continue it. Answers are copied, not re-run."""
+    conv = viewable(conversation_id, user)
+    with connect() as conn, conn.transaction():
+        new_id = conn.execute("INSERT INTO conversations (user_id, title) VALUES (%s, %s) RETURNING id", (user.id, conv["title"][:120])).fetchone()[0]
+        conn.execute("INSERT INTO runs (question, answer, display, critic, attempts, latency_ms, user_id, conversation_id, input_tokens, output_tokens) "
+                     "SELECT question, answer, display, critic, attempts, latency_ms, %s, %s, 0, 0 FROM runs WHERE conversation_id = %s ORDER BY id",
+                     (user.id, new_id, conversation_id))
+    return {"id": new_id}

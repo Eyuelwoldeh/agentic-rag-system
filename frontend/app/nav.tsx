@@ -4,6 +4,7 @@ import { BarChart3, History, LayoutDashboard, LibraryBig, LogOut, Menu, MessageS
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { BellButton, NotificationsPanel, useNotifications } from "@/components/Notifications";
 import { api } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { usePref } from "@/lib/prefs";
@@ -26,6 +27,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = usePref("nav-collapsed", false);
+  const [bellOpen, setBellOpen] = useState(false);
+  const notifications = useNotifications(Boolean(me));
   if (!me) return <>{children}</>; // sign-in page renders without the shell
 
   async function signOut() {
@@ -64,6 +67,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </div>
       )}
       <div className="mt-auto space-y-0.5 border-t border-line pt-3">
+        <BellButton unread={notifications.data.unread} mini={mini} onClick={() => { setOpen(false); setBellOpen(true); }} />
         {link({ href: "/settings", label: "Settings", Icon: Settings })}
         <div className={`flex items-center gap-2 pt-2 ${mini ? "flex-col" : "px-2.5"}`}>
           <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-hover text-xs font-medium text-text2" title={mini ? me.email : undefined} aria-hidden>
@@ -103,10 +107,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-12 items-center gap-3 border-b border-line bg-panel px-4 md:hidden">
           <button onClick={() => setOpen(true)} aria-label="Open menu" className="text-text2"><Menu className="h-5 w-5" /></button>
-          <span className="text-sm font-semibold">Agentic RAG</span>
+          <span className="flex-1 text-sm font-semibold">Agentic RAG</span>
+          <BellButton unread={notifications.data.unread} label={false} onClick={() => setBellOpen(true)} />
         </div>
         <main className="min-w-0 flex-1">{children}</main>
       </div>
+      {bellOpen && <NotificationsPanel data={notifications.data} reload={notifications.reload} onClose={() => setBellOpen(false)} />}
     </div>
   );
 }

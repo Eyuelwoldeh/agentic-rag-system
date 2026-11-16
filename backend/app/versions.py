@@ -7,6 +7,7 @@ import difflib
 
 from psycopg import sql
 
+from . import notify
 from .analysis import compact
 from .db import connect
 from .ingest import drop_tables, extract_pages, ingest_spreadsheet, upsert_document
@@ -66,6 +67,9 @@ def replace_document(doc_id: int, filename: str, data: bytes, user_id: int) -> d
     with connect() as conn:
         conn.execute("UPDATE documents SET replaced_at = now(), change_note = %s WHERE id = %s", (note, doc_id))
     save_original(key, filename, data, owner or user_id)
+    if notify.settings()["document_updates"]:
+        people = [u for u in notify.users_who_can_see(allowed) if u != user_id]
+        notify.notify(people, "policy_change", f"Updated: {filename}", "\n".join(note.splitlines()[:3]), "/library")
     return {**doc, "change_note": note}
 
 

@@ -1,13 +1,14 @@
 "use client";
 
-import { ChevronRight, Copy, ExternalLink, FileText, History, MessageSquarePlus, PanelLeft, Pencil, Search, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { ChevronRight, Copy, CopyPlus, ExternalLink, FileText, History, MessageSquarePlus, PanelLeft, Pencil, Search, Share2, ThumbsDown, ThumbsUp, Trash2, Users } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Chart, { type ChartData } from "@/components/Chart";
+import Comments from "@/components/Comments";
 import { DocumentPreview } from "@/components/Preview";
-import { Button, SidePanel, Status, useUI } from "@/components/ui";
+import { Button, inputCls, SidePanel, Status, useUI } from "@/components/ui";
 import { api, apiJson, streamChat, type AgentEvent, type RawChart, type Source } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { usePref } from "@/lib/prefs";
@@ -20,6 +21,7 @@ type Assistant = { role: "assistant"; content: string; steps: Step[]; sources: S
 type Msg = { role: "user"; content: string } | Assistant;
 type Home = { checklist: { id: string; label: string; done: boolean }[]; suggestions: string[]; ai: string[] };
 type Conv = { id: number; title: string; updated_at: string; questions: number };
+type SharedConv = { id: number; title: string; updated_at: string; shared_by: string };
 type Turn = { run_id: number; question: string; answer: string; sources: Source[]; charts: RawChart[]; steps: Step[]; memory: string;
   latency_ms: number; attempts: number; verified: boolean; feedback: number | null; input_tokens: number; output_tokens: number };
 
@@ -44,7 +46,10 @@ export default function Ask() {
   const [busy, setBusy] = useState(false);
   const [home, setHome] = useState<Home | null>(null);
   const [convs, setConvs] = useState<Conv[]>([]);
+  const [shared, setShared] = useState<SharedConv[]>([]);
   const [convId, setConvId] = useState<number | null>(null);
+  const [sharedBy, setSharedBy] = useState<string | null>(null); // set when viewing someone else's conversation (read-only)
+  const [shareOpen, setShareOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [listShown, setListShown] = usePref("conversations-shown", true);
   const convRef = useRef<number | null>(null); // current conversation, readable inside the streaming loop
@@ -52,7 +57,10 @@ export default function Ask() {
   const started = useRef(false);
 
   const loadHome = useCallback(() => apiJson<Home>("/api/home").then(setHome).catch(() => {}), []);
-  const loadConvs = useCallback(() => apiJson<Conv[]>("/api/conversations").then(setConvs).catch(() => {}), []);
+  const loadConvs = useCallback(() => {
+    apiJson<Conv[]>("/api/conversations").then(setConvs).catch(() => {});
+    apiJson<SharedConv[]>("/api/shared-conversations").then(setShared).catch(() => {});
+  }, []);
 
   const select = useCallback((id: number | null) => {
     convRef.current = id;
@@ -62,12 +70,14 @@ export default function Ask() {
 
   const open = useCallback(async (id: number) => {
     try {
-      const c = await apiJson<{ turns: Turn[] }>(`/api/conversations/${id}`);
+      const c = await apiJson<{ turns: Turn[]; shared_by: string | null }>(`/api/conversations/${id}`);
       setMsgs(turnsToMsgs(c.turns));
+      setSharedBy(c.shared_by);
       select(id);
     } catch {
       select(null);
       setMsgs([]);
+      setSharedBy(null);
       toast("That conversation isn't available.", "error");
     }
     setHistoryOpen(false);
@@ -76,6 +86,7 @@ export default function Ask() {
   function newConversation() {
     select(null);
     setMsgs([]);
+    setSharedBy(null);
     setHistoryOpen(false);
   }
 
@@ -153,9 +164,21 @@ export default function Ask() {
     loadConvs();
   }
 
+  async function continueAsMine() {
+    if (!convId) return;
+    try {
+      const { id } = await apiJson<{ id: number }>(`/api/conversations/${convId}/fork`, { method: "POST" });
+      loadConvs();
+      await open(id);
+      toast("Copied into a new conversation. Follow-up answers use your access.");
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  }
+
   const submit = () => !busy && ask(input);
-  const list = <ConversationList convs={convs} active={convId} busy={busy} onOpen={open} onNew={newConversation} onRename={rename} onDelete={remove} />;
-  const title = convs.find((c) => c.id === convId)?.title;
+  const list = <ConversationList convs={convs} shared={shared} active={convId} busy={busy} onOpen={open} onNew={newConversation} onRename={rename} onDelete={remove} />;
+  const title = convs.find((c) => c.id === convId)?.title ?? shared.find((c) => c.id === convId)?.title;
 
   return (
     <div className="flex h-dvh">
@@ -174,6 +197,7 @@ export default function Ask() {
             </div>
           </div>
           <div className="flex gap-2">
+            {convId && !sharedBy && msgs.length > 0 && <Button icon={<Share2 className="h-4 w-4" />} onClick={() => setShareOpen(true)} disabled={busy}>Share</Button>}
             <Button className="lg:hidden" icon={<History className="h-4 w-4" />} onClick={() => setHistoryOpen(true)}>Conversations</Button>
             {msgs.length > 0 && <Button className={listShown ? "lg:hidden" : ""} icon={<MessageSquarePlus className="h-4 w-4" />} onClick={newConversation} disabled={busy}>New</Button>}
           </div>
@@ -183,11 +207,20 @@ export default function Ask() {
           <div className="mx-auto max-w-3xl space-y-6 px-6 py-6">
             {home && home.ai.length === 0 && <NoAINotice />}
             {msgs.length === 0 && <Start home={home} onAsk={(q) => ask(q)} />}
-            {msgs.map((m, i) => (m.role === "user" ? <Question key={i} text={m.content} /> : <AnswerView key={i} m={m} />))}
+            {sharedBy && <SharedNotice by={sharedBy} />}
+            {msgs.map((m, i) => (m.role === "user" ? <Question key={i} text={m.content} /> : <AnswerView key={i} m={m} readOnly={Boolean(sharedBy)} />))}
             <div ref={bottom} />
           </div>
         </div>
 
+        {sharedBy ? (
+          <div className="border-t border-line bg-panel px-6 py-3">
+            <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-3">
+              <p className="min-w-0 flex-1 text-sm text-text2">This conversation is read-only. Continue it as your own to ask follow-up questions with your access.</p>
+              <Button variant="primary" icon={<CopyPlus className="h-4 w-4" />} onClick={continueAsMine}>Continue in a new conversation</Button>
+            </div>
+          </div>
+        ) : (
         <form onSubmit={(e) => { e.preventDefault(); submit(); }} className="border-t border-line bg-panel px-6 py-3">
           <div className="mx-auto flex max-w-3xl items-end gap-2">
             <label className="sr-only" htmlFor="question">Question</label>
@@ -199,13 +232,15 @@ export default function Ask() {
           </div>
           <p className="mx-auto mt-1 max-w-3xl text-xs text-muted">Press Enter to send, Shift+Enter for a new line. Conversations are saved automatically.</p>
         </form>
+        )}
+        {shareOpen && convId && <ShareDialog id={convId} title={title ?? "Conversation"} onClose={() => setShareOpen(false)} />}
       </div>
     </div>
   );
 }
 
-function ConversationList({ convs, active, busy, onOpen, onNew, onRename, onDelete }: {
-  convs: Conv[]; active: number | null; busy: boolean; onOpen: (id: number) => void; onNew: () => void; onRename: (c: Conv) => void; onDelete: (c: Conv) => void;
+function ConversationList({ convs, shared, active, busy, onOpen, onNew, onRename, onDelete }: {
+  convs: Conv[]; shared: SharedConv[]; active: number | null; busy: boolean; onOpen: (id: number) => void; onNew: () => void; onRename: (c: Conv) => void; onDelete: (c: Conv) => void;
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -229,8 +264,98 @@ function ConversationList({ convs, active, busy, onOpen, onNew, onRename, onDele
             </li>
           ))}
         </ul>
+        {shared.length > 0 && (
+          <>
+            <p className="px-2.5 pt-4 pb-1 text-xs font-medium text-muted">Shared with me</p>
+            <ul className="space-y-0.5">
+              {shared.map((c) => (
+                <li key={c.id}>
+                  <button onClick={() => !busy && onOpen(c.id)} aria-current={active === c.id ? "page" : undefined}
+                    className={`block w-full rounded px-2.5 py-2 text-left ${active === c.id ? "bg-accent-weak" : "hover:bg-hover"}`}>
+                    <span className={`block truncate text-sm ${active === c.id ? "font-medium text-accent" : ""}`}>{c.title}</span>
+                    <span className="block truncate text-xs text-muted">{c.shared_by}, {ago(c.updated_at)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </nav>
     </div>
+  );
+}
+
+function SharedNotice({ by }: { by: string }) {
+  return (
+    <div className="flex items-start gap-3 rounded border border-line border-l-4 border-l-accent bg-panel p-3 text-sm">
+      <Status kind="info">Shared</Status>
+      <p className="text-text2">Shared by {by}; answers reflect {by}&apos;s access, so they may include information you can&apos;t open yourself.</p>
+    </div>
+  );
+}
+
+type ShareState = { everyone: boolean; user_ids: number[]; people: { id: number; email: string }[] };
+
+function ShareDialog({ id, title, onClose }: { id: number; title: string; onClose: () => void }) {
+  const { toast } = useUI();
+  const [s, setS] = useState<ShareState | null>(null);
+  const [filter, setFilter] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    apiJson<ShareState>(`/api/conversations/${id}/shares`).then(setS).catch((e) => toast(e.message, "error"));
+  }, [id, toast]);
+
+  async function save() {
+    if (!s) return;
+    setSaving(true);
+    try {
+      await apiJson(`/api/conversations/${id}/shares`, { method: "PUT", body: JSON.stringify({ everyone: s.everyone, user_ids: s.user_ids }) });
+      toast(s.everyone || s.user_ids.length ? "Sharing updated." : "Stopped sharing.");
+      onClose();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+  const toggle = (uid: number) => s && setS({ ...s, user_ids: s.user_ids.includes(uid) ? s.user_ids.filter((x) => x !== uid) : [...s.user_ids, uid] });
+  const shown = s?.people.filter((p) => p.email.toLowerCase().includes(filter.toLowerCase())) ?? [];
+
+  return (
+    <SidePanel title="Share conversation" description={title} onClose={onClose}
+      footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" onClick={save} loading={saving} disabled={!s}>Save</Button></>}>
+      <div className="space-y-4">
+        <div className="flex items-start gap-3 rounded border border-line border-l-4 border-l-warn bg-panel p-3 text-sm">
+          <Status kind="warning">Your access</Status>
+          <p className="text-text2">People you share with can read every question and answer, read-only. Answers reflect your access, so they may include information those people can&apos;t open themselves.</p>
+        </div>
+        {s && (
+          <>
+            <label className="flex items-center gap-2.5 rounded border border-line px-3 py-2.5 text-sm">
+              <input type="checkbox" checked={s.everyone} onChange={(e) => setS({ ...s, everyone: e.target.checked })} />
+              <Users className="h-4 w-4 text-muted" aria-hidden />
+              <span className="font-medium">Everyone</span>
+              <span className="text-xs text-muted">All people in this workspace</span>
+            </label>
+            <fieldset disabled={s.everyone} className="space-y-2 disabled:opacity-50">
+              <legend className="mb-2 text-xs font-medium text-text2">People</legend>
+              <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by email" aria-label="Filter people" className={inputCls} />
+              {s.people.length === 0 && <p className="text-sm text-muted">No one else has an account yet.</p>}
+              <ul className="divide-y divide-line rounded border border-line">
+                {shown.map((p) => (
+                  <li key={p.id}>
+                    <label className="flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-hover">
+                      <input type="checkbox" checked={s.user_ids.includes(p.id)} onChange={() => toggle(p.id)} />
+                      {p.email}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </fieldset>
+          </>
+        )}
+      </div>
+    </SidePanel>
   );
 }
 
@@ -298,7 +423,7 @@ function Question({ text }: { text: string }) {
   );
 }
 
-function AnswerView({ m }: { m: Assistant }) {
+function AnswerView({ m, readOnly }: { m: Assistant; readOnly?: boolean }) {
   const critic = [...m.steps].reverse().find((s) => s.type === "critic");
   return (
     <article className="rounded border border-line bg-panel">
@@ -311,7 +436,7 @@ function AnswerView({ m }: { m: Assistant }) {
           <div className="ml-auto flex items-center gap-1">
             <span className="mr-2 text-xs text-muted tabular-nums">{(m.done.latency_ms / 1000).toFixed(1)} s</span>
             <CopyButton text={m.content} />
-            <Feedback runId={m.done.run_id} initial={m.feedback ?? null} />
+            {!readOnly && <Feedback runId={m.done.run_id} initial={m.feedback ?? null} />}
           </div>
         )}
       </header>
@@ -338,6 +463,7 @@ function AnswerView({ m }: { m: Assistant }) {
         </details>
       )}
       {m.steps.length > 0 && <Trace steps={m.steps} pending={m.pending} />}
+      {m.done?.run_id && !m.pending ? <Comments targetType="run" targetId={m.done.run_id} /> : null}
     </article>
   );
 }
