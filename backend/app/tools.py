@@ -113,6 +113,62 @@ CLIENT_TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "list_metrics",
+        "description": "List the company's defined metrics (official definitions of revenue, margin, etc.) the user can query.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "query_metric",
+        "description": (
+            "Compute a defined metric (from list_metrics) with its official definition. Optionally break it down by a "
+            "column and/or a time period and limit it to dates. Returns a result id usable with create_chart and forecast."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Metric name from list_metrics"},
+                "group_by": {"type": "string", "description": "Optional column of the metric's table to break down by, e.g. location"},
+                "period": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"], "description": "Optional time bucket"},
+                "start": {"type": "string", "description": "Optional first date included, YYYY-MM-DD"},
+                "end": {"type": "string", "description": "Optional date to stop before (exclusive), YYYY-MM-DD"},
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "forecast",
+        "description": (
+            "Project a time series from a query result forward (seasonal with 24+ months of data, else linear trend) "
+            "with a likely range, and show a line chart of actual and forecast values."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "result_id": {"type": "string", "description": "Result id from run_sql or query_metric, one row per period"},
+                "date_column": {"type": "string", "description": "Column holding the period (date or YYYY-MM)"},
+                "value_column": {"type": "string", "description": "Numeric column to forecast"},
+                "horizon": {"type": "integer", "description": "Periods ahead to forecast (1-36)"},
+            },
+            "required": ["result_id", "date_column", "value_column", "horizon"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "what_if",
+        "description": "Scenario: total of a numeric column in a query result if it changed by a percentage (e.g. -10 for a 10% drop).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "result_id": {"type": "string", "description": "Result id from run_sql or query_metric"},
+                "column": {"type": "string", "description": "Numeric column to adjust"},
+                "change_pct": {"type": "number", "description": "Percentage change, e.g. 5 or -12.5"},
+            },
+            "required": ["result_id", "column", "change_pct"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 SERVER_TOOLS = [
@@ -340,5 +396,57 @@ def execute(name: str, args: dict, ctx: Ctx) -> str:
         chart["id"] = f"C{len(ctx.charts) + 1}"
         ctx.charts.append(chart)
         return "The chart is now shown to the user. Refer to it as \"the chart\" (never by an id) and explain the key takeaway; don't repeat all its numbers."
+
+    if name == "list_metrics":
+        from . import metrics
+
+        found = [{k: m[k] for k in ("name", "description", "format", "table_name", "time_column")} for m in metrics.visible(ctx.email)]
+        return json.dumps(found) if found else "No metrics are defined yet. Use list_data_sources and run_sql instead."
+
+    if name == "query_metric":
+        from . import metrics
+
+        m = metrics.get(args["name"])
+        if not m:
+            raise ValueError(f"No metric named {args['name']!r}. Call list_metrics.")
+        sql = metrics.build_sql(m, metrics.schema_for(m["source"], m["table_name"], ctx.email), metrics.kind_of(m["source"], ctx.email),
+                                group_by=args.get("group_by"), period=args.get("period"), start=args.get("start"), end=args.get("end"))
+        out = json.loads(execute("run_sql", {"source": m["source"], "query": sql}, ctx))  # stored like run_sql, so charts work
+        return json.dumps({"metric": m["name"], "format": m["format"], **out}, default=str)
+
+    if name in ("forecast", "what_if"):
+        from . import analysis
+
+        result = ctx.results.get(args["result_id"]) or _reuse(args["result_id"], ctx)
+        if not result:
+            raise ValueError(f"Unknown result_id {args['result_id']}. Run the query again and use the id it returns.")
+        cols = result["columns"]
+        wanted = [args["column"]] if name == "what_if" else [args["date_column"], args["value_column"]]
+        missing = [c for c in wanted if c not in cols]
+        if missing:
+            raise ValueError(f"Columns {missing} not in result. Available: {cols}")
+        if name == "what_if":
+            return json.dumps({"column": args["column"], **analysis.what_if([r[cols.index(args["column"])] for r in result["rows"]],
+                                                                            float(args["change_pct"]))})
+        di, vi = cols.index(args["date_column"]), cols.index(args["value_column"])
+        totals: dict[str, float] = {}
+        for r in result["rows"]:  # several rows per period (e.g. per location) are summed
+            if r[di] is not None and isinstance(r[vi], (int, float)):
+                totals[str(r[di])[:10]] = totals.get(str(r[di])[:10], 0) + r[vi]
+        periods = sorted(totals)
+        f = analysis.forecast(periods, [totals[p] for p in periods], args["horizon"])
+        rows = [[p, totals[p], None, None, None] for p in periods]
+        rows[-1][2] = totals[periods[-1]]  # the forecast line starts at the last actual value
+        rows += [list(r) for r in zip(f["periods"], [None] * len(f["periods"]), f["forecast"], f["lower"], f["upper"])]
+        rid = f"R{secrets.token_hex(3)}"
+        ctx.results[rid] = {"columns": [args["date_column"], "actual", "forecast", "low", "high"], "rows": rows,
+                            "source": result["source"], "sql": result["sql"]}
+        chart = build_chart(ctx.results[rid], {"type": "line", "title": f"{args['value_column'].replace('_', ' ').capitalize()}: actual and forecast",
+                                               "x": args["date_column"], "y": ["actual", "forecast"]})
+        chart["id"] = f"C{len(ctx.charts) + 1}"
+        ctx.charts.append(chart)
+        return json.dumps({"result_id": rid, "method": f["method"], "forecast": [
+            {"period": p, "forecast": v, "low": lo, "high": hi} for p, v, lo, hi in zip(f["periods"], f["forecast"], f["lower"], f["upper"])],
+            "note": "A line chart of actual and forecast values is shown. Give the range, not just the point forecast, and name the method."})
 
     raise ValueError(f"Unknown tool {name}")

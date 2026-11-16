@@ -1,15 +1,16 @@
 "use client";
 
-import { ChevronRight, Copy, CopyPlus, ExternalLink, FileText, History, MessageSquarePlus, PanelLeft, Pencil, Search, Share2, ThumbsDown, ThumbsUp, Trash2, Users } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronRight, Copy, CopyPlus, Download, ExternalLink, FileText, History, MessageSquarePlus, PanelLeft, Pencil, Search, Share2, ThumbsDown, ThumbsUp, Trash2, Users } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Chart, { type ChartData } from "@/components/Chart";
 import Comments from "@/components/Comments";
+import { ReportForm } from "@/components/Insights";
 import { DocumentPreview } from "@/components/Preview";
 import { Button, inputCls, SidePanel, Status, useUI } from "@/components/ui";
-import { api, apiJson, streamChat, type AgentEvent, type RawChart, type Source } from "@/lib/api";
+import { API, api, apiJson, streamChat, type AgentEvent, type RawChart, type Source } from "@/lib/api";
 import { useMe } from "@/lib/me";
 import { usePref } from "@/lib/prefs";
 import { ago } from "@/lib/time";
@@ -197,6 +198,7 @@ export default function Ask() {
             </div>
           </div>
           <div className="flex gap-2">
+            {convId && !busy && !sharedBy && <ExportMenu id={convId} />}
             {convId && !sharedBy && msgs.length > 0 && <Button icon={<Share2 className="h-4 w-4" />} onClick={() => setShareOpen(true)} disabled={busy}>Share</Button>}
             <Button className="lg:hidden" icon={<History className="h-4 w-4" />} onClick={() => setHistoryOpen(true)}>Conversations</Button>
             {msgs.length > 0 && <Button className={listShown ? "lg:hidden" : ""} icon={<MessageSquarePlus className="h-4 w-4" />} onClick={newConversation} disabled={busy}>New</Button>}
@@ -208,7 +210,8 @@ export default function Ask() {
             {home && home.ai.length === 0 && <NoAINotice />}
             {msgs.length === 0 && <Start home={home} onAsk={(q) => ask(q)} />}
             {sharedBy && <SharedNotice by={sharedBy} />}
-            {msgs.map((m, i) => (m.role === "user" ? <Question key={i} text={m.content} /> : <AnswerView key={i} m={m} readOnly={Boolean(sharedBy)} />))}
+            {msgs.map((m, i) => (m.role === "user" ? <Question key={i} text={m.content} />
+              : <AnswerView key={i} m={m} readOnly={Boolean(sharedBy)} question={msgs[i - 1]?.content ?? ""} />))}
             <div ref={bottom} />
           </div>
         </div>
@@ -423,7 +426,35 @@ function Question({ text }: { text: string }) {
   );
 }
 
-function AnswerView({ m, readOnly }: { m: Assistant; readOnly?: boolean }) {
+function ExportMenu({ id }: { id: number }) {
+  const link = (format: "pdf" | "md", label: string) => (
+    <a href={`${API}/api/conversations/${id}/export?format=${format}`} download className="block px-3 py-2 text-sm hover:bg-hover">{label}</a>
+  );
+  return (
+    <details className="relative">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center gap-1.5 rounded border border-line bg-panel px-3 text-sm font-medium hover:bg-hover">
+        <Download className="h-4 w-4" aria-hidden />Export<ChevronDown className="h-3.5 w-3.5" aria-hidden />
+      </summary>
+      <div className="absolute right-0 z-20 mt-1 w-40 rounded border border-line bg-panel py-1 shadow-lg">
+        {link("pdf", "PDF document")}
+        {link("md", "Markdown")}
+      </div>
+    </details>
+  );
+}
+
+function ScheduleButton({ question }: { question: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button aria-label="Schedule this" title="Schedule this question as a recurring report" onClick={() => setOpen(true)}
+        className="rounded p-1.5 text-muted hover:bg-hover hover:text-foreground"><CalendarClock className="h-4 w-4" /></button>
+      {open && <ReportForm question={question} onClose={() => setOpen(false)} onSaved={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function AnswerView({ m, readOnly, question }: { m: Assistant; readOnly?: boolean; question: string }) {
   const critic = [...m.steps].reverse().find((s) => s.type === "critic");
   return (
     <article className="rounded border border-line bg-panel">
@@ -436,6 +467,7 @@ function AnswerView({ m, readOnly }: { m: Assistant; readOnly?: boolean }) {
           <div className="ml-auto flex items-center gap-1">
             <span className="mr-2 text-xs text-muted tabular-nums">{(m.done.latency_ms / 1000).toFixed(1)} s</span>
             <CopyButton text={m.content} />
+            {question && !readOnly && <ScheduleButton question={question} />}
             {!readOnly && <Feedback runId={m.done.run_id} initial={m.feedback ?? null} />}
           </div>
         )}
@@ -559,6 +591,10 @@ const TOOL_LABEL: Record<string, string> = {
   run_sql: "Queried data",
   create_chart: "Created chart",
   code_execution: "Ran a calculation",
+  list_metrics: "Listed metrics",
+  query_metric: "Calculated a metric",
+  forecast: "Forecast",
+  what_if: "Calculated a scenario",
 };
 
 function Trace({ steps, pending }: { steps: Step[]; pending: boolean }) {
@@ -606,7 +642,7 @@ function StepView({ s }: { s: Step }) {
 function fmtInput(input: unknown) {
   if (input && typeof input === "object") {
     const o = input as Record<string, unknown>;
-    return String(o.query ?? o.title ?? o.table ?? o.command ?? o.code ?? (Array.isArray(o.tables) ? o.tables.join(", ") : "") ?? "").slice(0, 200);
+    return String(o.query ?? o.name ?? o.title ?? o.table ?? o.command ?? o.code ?? (Array.isArray(o.tables) ? o.tables.join(", ") : "") ?? "").slice(0, 200);
   }
   return String(input ?? "");
 }

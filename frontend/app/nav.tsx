@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, History, LayoutDashboard, LibraryBig, LogOut, Menu, MessageSquareText, PanelLeftClose, PanelLeftOpen, Plug, Settings, X } from "lucide-react";
+import { BarChart3, BellRing, CalendarClock, History, LayoutDashboard, LibraryBig, LogOut, Menu, MessageSquareText, PanelLeftClose, PanelLeftOpen, Plug, Settings, Sigma, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -15,6 +15,9 @@ const WORKSPACE: Item[] = [
   { href: "/dashboard", label: "Dashboards", Icon: LayoutDashboard },
   { href: "/library", label: "Library", Icon: LibraryBig },
   { href: "/runs", label: "Activity", Icon: History },
+  { href: "/metrics", label: "Metrics", Icon: Sigma },
+  { href: "/reports", label: "Reports", Icon: CalendarClock },
+  { href: "/alerts", label: "Alerts", Icon: BellRing },
 ];
 const ADMIN: Item[] = [
   { href: "/connectors", label: "Connectors", Icon: Plug },
