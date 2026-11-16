@@ -331,3 +331,59 @@ def _pearson(pairs: list[tuple[float, float]]) -> float | None:
     if not sx or not sy:
         return None
     return sum((x - mx) * (y - my) for x, y in pairs) / (sx * sy)
+
+
+# ---------- forecasting and what-if ----------
+
+def _next_periods(periods: list[str], horizon: int) -> tuple[list[str], bool]:
+    """Future labels in the same shape as `periods` → (labels, monthly?)."""
+    try:
+        ds = [date.fromisoformat(p[:10] if len(p) >= 10 else p[:7] + "-01") for p in periods]
+    except ValueError:
+        return [f"+{h}" for h in range(1, horizon + 1)], False
+    monthly = len(ds) > 1 and all(d.day == 1 for d in ds) and all(
+        (b.year - a.year) * 12 + b.month - a.month == 1 for a, b in zip(ds, ds[1:]))
+    last, short = ds[-1], all(len(p) == 7 for p in periods)
+    if monthly:
+        out = [date(last.year + (last.month - 1 + h) // 12, (last.month - 1 + h) % 12 + 1, 1) for h in range(1, horizon + 1)]
+        return [d.isoformat()[:7] if short else d.isoformat() for d in out], True
+    step = statistics.median((b - a).days for a, b in zip(ds, ds[1:])) if len(ds) > 1 else 1
+    return [date.fromordinal(last.toordinal() + int(step * h)).isoformat() for h in range(1, horizon + 1)], False
+
+
+def forecast(periods: list[str], values: list[float], horizon: int) -> dict:
+    """Seasonal-naive with trend for ≥ 24 monthly points, else a linear trend. Range ≈ 95% (±1.96 × residual spread).
+
+    → {periods, forecast, lower, upper, method}"""
+    if len(values) < 3:
+        raise ValueError("Need at least 3 data points to forecast")
+    horizon = max(1, min(int(horizon), 36))
+    labels, monthly = _next_periods(periods, horizon)
+    n = len(values)
+    if monthly and n >= 24:
+        drift = (sum(values[-12:]) - sum(values[-24:-12])) / 12  # average year-over-year change per month
+        resid = [values[t] - values[t - 12] - drift for t in range(12, n)]
+        s = statistics.pstdev(resid)
+        point, spread = [], []
+        for h in range(1, horizon + 1):
+            years = (h - 1) // 12 + 1
+            point.append(values[n - 12 + (h - 1) % 12] + drift * years)
+            spread.append(1.96 * s * math.sqrt(years))
+        method = "seasonal (same month last year plus the yearly trend)"
+    else:
+        mx, my = (n - 1) / 2, sum(values) / n
+        slope = sum((x - mx) * (y - my) for x, y in enumerate(values)) / sum((x - mx) ** 2 for x in range(n))
+        icpt = my - slope * mx
+        s = math.sqrt(sum((y - icpt - slope * x) ** 2 for x, y in enumerate(values)) / max(n - 2, 1))
+        point = [icpt + slope * (n - 1 + h) for h in range(1, horizon + 1)]
+        spread = [1.96 * s * math.sqrt(1 + h / n) for h in range(1, horizon + 1)]
+        method = "linear trend"
+    return {"periods": labels, "forecast": [round(p, 2) for p in point], "lower": [round(p - d, 2) for p, d in zip(point, spread)],
+            "upper": [round(p + d, 2) for p, d in zip(point, spread)], "method": method}
+
+
+def what_if(values: list, change_pct: float) -> dict:
+    total = sum(v for v in values if isinstance(v, (int, float)))
+    adjusted = total * (1 + change_pct / 100)
+    return {"original_total": round(total, 2), "adjusted_total": round(adjusted, 2), "difference": round(adjusted - total, 2),
+            "change_pct": change_pct}

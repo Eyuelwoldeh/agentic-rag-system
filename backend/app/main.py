@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import agent, auth, connectors, conversations, dashboards, datasources, insights, llm, notify, oauth, previews, schedules, tableacl, versions
+from . import alerts, export, metrics, reports
 from .db import connect, migrate
 from .ingest import drop_tables, ingest_document, ingest_spreadsheet
 from .security import FRONTEND_URL, User, csrf_middleware, current_user, require_admin
@@ -32,6 +33,10 @@ app.include_router(insights.router)
 app.include_router(previews.router)
 app.include_router(conversations.router)
 app.include_router(notify.router)
+app.include_router(metrics.router)
+app.include_router(reports.router)
+app.include_router(alerts.router)
+app.include_router(export.router)
 
 MAX_UPLOAD = 25 * 1024 * 1024
 DOC_TYPES = (".pdf", ".txt", ".md")
