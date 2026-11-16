@@ -1,10 +1,10 @@
 "use client";
 
-import { Database, FileText, Globe, MoreHorizontal, Plug, Plus, RefreshCw, X } from "lucide-react";
+import { Database, FileText, Globe, MoreHorizontal, Plug, Plus, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import SortableTable, { type Column } from "@/components/SortableTable";
-import { Button, EmptyState, Field, inputCls, Page, PageHeader, Panel, Skeleton, Status, useUI } from "@/components/ui";
+import { Button, EmptyState, Field, inputCls, Page, PageHeader, Panel, SidePanel, Skeleton, Status, useUI } from "@/components/ui";
 import { API, api, apiJson } from "@/lib/api";
 import { ago } from "@/lib/time";
 
@@ -161,30 +161,6 @@ function OverflowMenu({ label, items }: { label: string; items: { label: string;
         ))}
       </ul>
     </details>
-  );
-}
-
-/* ---------- side panel (drawer) ---------- */
-
-function SidePanel({ title, description, onClose, children, footer }: { title: string; description?: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    ref.current?.showModal(); // native modal: focus trap + Esc
-  }, []);
-  return (
-    <dialog ref={ref} onClose={onClose} className="fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-dvh w-[min(36rem,100vw)] border-l border-line bg-panel p-0 text-foreground">
-      <div className="flex h-full flex-col">
-        <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
-          <div>
-            <h2 className="text-base font-semibold">{title}</h2>
-            {description && <p className="mt-0.5 text-sm text-text2">{description}</p>}
-          </div>
-          <button aria-label="Close" onClick={onClose} className="text-muted hover:text-foreground"><X className="h-5 w-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
-      </div>
-    </dialog>
   );
 }
 

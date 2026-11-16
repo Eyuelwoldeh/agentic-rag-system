@@ -1,6 +1,8 @@
 """Tool layer. Client tools run here; web search and code execution run server-side at Anthropic."""
 import json
 
+import re
+import secrets
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -14,8 +16,9 @@ CLIENT_TOOLS = [
     {
         "name": "search_documents",
         "description": (
-            "Hybrid (semantic + keyword) search over the company knowledge base: uploaded files plus synced "
-            "Slack, Google Drive, Notion, GitHub and crawled websites. Only returns what the current user may see. "
+            "Hybrid (semantic + keyword) search over ALL company documents: uploaded files (memos, handbooks, notes, PDFs) "
+            "plus anything synced from Slack, Google Drive, Notion, GitHub or websites. Only returns what the current user may see. "
+            "Leave `source` empty to search everything; set it only when the user names a specific place. "
             "Returns numbered passages labelled [S1], [S2]... Cite them by label. "
             "Call several times with rephrased queries if results are thin."
         ),
@@ -27,7 +30,7 @@ CLIENT_TOOLS = [
                 "source": {
                     "type": "string",
                     "enum": ["upload", "slack", "gdrive", "notion", "github", "web"],
-                    "description": "Optional: only search one source, e.g. 'slack' for team discussions",
+                    "description": "Optional, usually leave empty. Only when the user asks about one place, e.g. 'slack'. 'upload' = uploaded files.",
                 },
             },
             "required": ["query"],
@@ -59,9 +62,10 @@ CLIENT_TOOLS = [
     {
         "name": "run_sql",
         "description": (
-            "Run ONE read-only query in the source's SQL dialect. Returns a result id (R1, R2...) and a preview of "
+            "Run ONE read-only query in the source's SQL dialect. Returns a result id (like R4f9a1c) and a preview of "
             f"up to {PREVIEW_ROWS} rows. Aggregate in SQL (GROUP BY, date_trunc) instead of fetching raw rows; "
-            "keep results under a few hundred rows so they chart well."
+            "keep results under a few hundred rows so they chart well. Date columns are real dates: filter with "
+            "date literals (month >= DATE '2025-01-01'); in PostgreSQL use ROUND(x::numeric, 2)."
         ),
         "input_schema": {
             "type": "object",
@@ -98,7 +102,7 @@ CLIENT_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "result_id": {"type": "string", "description": "Result id from run_sql, e.g. R1"},
+                "result_id": {"type": "string", "description": "Result id from run_sql in this or an earlier turn, e.g. R4f9a1c"},
                 "type": {"type": "string", "enum": ["line", "bar", "number", "table"]},
                 "title": {"type": "string", "description": "Plain-language title stating what it shows"},
                 "x": {"type": "string", "description": "Column for the x-axis / categories (not needed for number)"},
@@ -133,7 +137,7 @@ WITH scoped AS (
   SELECT id, row_number() OVER (ORDER BY ts_rank(tsv, q) DESC) AS r
   FROM scoped, websearch_to_tsquery('english', %(q)s) q WHERE tsv @@ q ORDER BY r LIMIT 30
 )
-SELECT c.id, d.name, c.page, c.content, d.source, d.url, d.updated_at,
+SELECT c.id, d.name, c.page, c.content, d.source, d.url, d.updated_at, d.id, d.replaced_at, d.change_note,
        coalesce(1.0/(60+sem.r), 0) + coalesce(1.0/(60+kw.r), 0) AS score
 FROM sem FULL JOIN kw USING (id)
 JOIN chunks c ON c.id = coalesce(sem.id, kw.id)
@@ -150,7 +154,7 @@ def search_documents(query: str, k: int = 6, source: str | None = None, email: s
     with connect() as conn:
         rows = conn.execute(HYBRID_SQL, {"v": embed([query])[0], "q": query, "k": k, "source": source,
                                          "email": email.lower() if email else None}).fetchall()
-    keys = ["chunk_id", "document", "page", "content", "source", "url", "updated_at"]
+    keys = ["chunk_id", "document", "page", "content", "source", "url", "updated_at", "document_id", "replaced_at", "change_note"]
     return [dict(zip(keys, r)) for r in rows]
 
 
@@ -204,13 +208,63 @@ def build_chart(result: dict, spec: dict) -> dict:
             "columns": cols, "rows": result["rows"], "truncated": result.get("truncated", False)}
 
 
+DATE_TYPES = ("date", "timestamp without time zone", "timestamp with time zone")
+
+
+def _date_coverage(source: str, tables: dict, ctx: Ctx) -> dict:
+    """First and last date in each date column, so comparisons can be like-for-like (the latest year is often partial)."""
+    out = {}
+    for t, cols in tables.items():
+        for c, typ in cols.items():
+            if typ in DATE_TYPES:
+                q = f'SELECT min("{c}"), max("{c}") FROM "{t}"'
+                try:
+                    lo, hi = datasources.run(source, q, ctx.email, ctx.admin, max_rows=1)["rows"][0]
+                    out[f"{t}.{c}"] = {"from": str(lo)[:10], "to": str(hi)[:10]}
+                except Exception:
+                    pass
+    return out
+
+
+def _reuse(rid: str, ctx: Ctx) -> dict | None:
+    """A query from an earlier turn: re-run its SQL (with the asker's current access) instead of trusting old rows."""
+    with connect() as conn:
+        row = conn.execute("SELECT source, sql FROM query_results WHERE id = %s AND email IS NOT DISTINCT FROM %s",
+                           (rid, ctx.email)).fetchone()
+    if not row:
+        return None
+    result = datasources.run(row[0], row[1], ctx.email, ctx.admin)
+    ctx.results[rid] = {**result, "rows": [[_jsonable(v) for v in r] for r in result["rows"]], "source": row[0], "sql": row[1]}
+    return ctx.results[rid]
+
+
+_ID_CITATION = re.compile(r"\s?\[(?:R[0-9a-f]{6}|C\d+)(?:\s*,\s*(?:R[0-9a-f]{6}|C\d+))*\]")
+
+
+def strip_ids(text: str) -> str:
+    """Remove internal query/chart ids the model sometimes cites, e.g. "[Rd7ea5b]"; users can't use them."""
+    return _ID_CITATION.sub("", text or "")
+
+
+def memory_note(ctx: Ctx) -> str:
+    """Hidden note appended to the answer in conversation history: the queries behind it, reusable next turn."""
+    if not ctx.results:
+        return ""
+    lines = [f"- {rid}: {' '.join(r['sql'].split())[:400]} (source {r['source']}, {len(r['rows'])} rows)" for rid, r in ctx.results.items()]
+    return "[Queries behind this answer, reusable with create_chart or as a starting point:\n" + "\n".join(lines) + "]"
+
+
 def execute(name: str, args: dict, ctx: Ctx) -> str:
     """Run a client tool for the current user. Raises on bad input; the agent returns errors to the model."""
     if name == "search_documents":
         hits = search_documents(args["query"], args.get("k", 6), args.get("source"), ctx.email)
+        widened = ""
+        if not hits and args.get("source"):  # a filter on an empty or wrong source shouldn't hide the answer
+            hits = search_documents(args["query"], args.get("k", 6), None, ctx.email)
+            widened = f"(Nothing matched in {args['source']}, so these results are from all sources.)\n"
         if not hits:
-            return "No matching passages. Try a different query, or use web_search."
-        parts = []
+            return "No matching passages in any source. Try a different query, or use web_search."
+        parts = [widened] if widened else []
         for h in hits:
             existing = register_source(h, ctx.sources)
             parts.append(
@@ -218,7 +272,13 @@ def execute(name: str, args: dict, ctx: Ctx) -> str:
                 f'page="{h["page"]}" updated="{existing["updated_at"][:10]}">\n'
                 f'{h["content"]}\n</passage>'
             )
-        return "\n".join(parts)
+        # quiet context: if a document was replaced, say what changed so answers rely on (and can explain) the new version
+        noted = {}
+        for h in hits:
+            if h.get("change_note") and h["document_id"] not in noted:
+                noted[h["document_id"]] = (f'<recent_change document="{h["document"]}" replaced="{str(h["replaced_at"])[:10]}">\n'
+                                           f'{h["change_note"]}\n</recent_change>')
+        return "\n".join(parts + list(noted.values()))
 
     if name == "list_data_sources":
         out = []
@@ -227,7 +287,10 @@ def execute(name: str, args: dict, ctx: Ctx) -> str:
             try:
                 names = list(datasources.list_tables(src["id"], ctx.email, ctx.admin))[:200]
                 # spreadsheets: show which file/tab each table came from, so "the Q3 forecast" can be matched
-                tables = [{"name": n, "from": titles[n]["title"]} for n in names] if src["id"] == datasources.UPLOADS else names
+                tables = [{"name": n, "from": titles[n]["title"],
+                           **({"recently_replaced": {"on": str(titles[n]["replaced_at"])[:10], "changes": titles[n]["change_note"]}}
+                              if titles[n].get("change_note") else {})}
+                          for n in names] if src["id"] == datasources.UPLOADS else names
             except Exception as e:  # one broken warehouse shouldn't hide the others
                 tables = f"unavailable: {str(e)[:150]}"
             out.append({**src, "tables": tables})
@@ -238,11 +301,16 @@ def execute(name: str, args: dict, ctx: Ctx) -> str:
         wanted = args["tables"][:20]
         found = {t: schema[t] for t in wanted if t in schema}
         unknown = [t for t in wanted if t not in schema]
-        return json.dumps({"tables": found, **({"unknown": unknown} if unknown else {})})
+        coverage = _date_coverage(args["source"], found, ctx) if args["source"] == datasources.UPLOADS else {}
+        return json.dumps({"tables": found, **({"date_coverage": coverage} if coverage else {}),
+                           **({"unknown": unknown} if unknown else {})}, default=str)
 
     if name == "run_sql":
         result = datasources.run(args["source"], args["query"], ctx.email, ctx.admin)
-        rid = f"R{len(ctx.results) + 1}"
+        rid = f"R{secrets.token_hex(3)}"  # unique across the conversation, so follow-up turns can reuse it
+        with connect() as conn:
+            conn.execute("INSERT INTO query_results (id, email, source, sql) VALUES (%s, %s, %s, %s)",
+                         (rid, ctx.email, args["source"], args["query"]))
         rows = [[_jsonable(v) for v in r] for r in result["rows"]]
         ctx.results[rid] = {**result, "rows": rows, "source": args["source"], "sql": args["query"]}
         preview = {"result_id": rid, "columns": result["columns"], "row_count": len(rows),
@@ -258,17 +326,19 @@ def execute(name: str, args: dict, ctx: Ctx) -> str:
         for chart in a["charts"]:
             chart["id"] = f"C{len(ctx.charts) + 1}"
             ctx.charts.append(chart)
-        return json.dumps({"spreadsheet": a["title"], "rows": a["rows"], "main_measure": a["metric"], "time_column": a["time"],
+        meta = tableacl.visible_tables(ctx.email).get(args["table"], {})
+        change = {"recent_change": {"replaced": str(meta["replaced_at"])[:10], "changes": meta["change_note"]}} if meta.get("change_note") else {}
+        return json.dumps({**change, "spreadsheet": a["title"], "rows": a["rows"], "main_measure": a["metric"], "time_column": a["time"],
                            "segment_column": a["segment"], "findings": a["findings"],
                            "charts_shown": [c["title"] for c in a["charts"]]}, default=str)
 
     if name == "create_chart":
-        result = ctx.results.get(args["result_id"])
+        result = ctx.results.get(args["result_id"]) or _reuse(args["result_id"], ctx)
         if not result:
-            raise ValueError(f"Unknown result_id {args['result_id']}. Use an id returned by run_sql.")
+            raise ValueError(f"Unknown result_id {args['result_id']}. Run the query again with run_sql and use the id it returns.")
         chart = build_chart(result, args)
         chart["id"] = f"C{len(ctx.charts) + 1}"
         ctx.charts.append(chart)
-        return f"Chart {chart['id']} shown to the user. Refer to it in your answer; don't repeat all its numbers."
+        return "The chart is now shown to the user. Refer to it as \"the chart\" (never by an id) and explain the key takeaway; don't repeat all its numbers."
 
     raise ValueError(f"Unknown tool {name}")

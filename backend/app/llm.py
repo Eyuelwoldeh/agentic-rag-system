@@ -147,6 +147,8 @@ def critic_prompt(question: str, answer: str, evidence: list[str]) -> str:
             f"<question>\n{question}\n</question>\n\n<evidence>\n{ev}\n</evidence>\n\n<answer>\n{answer}\n</answer>\n\n"
             "Judge: grounded (every factual claim supported by the evidence or a clearly cited source), "
             "complete (all parts of the question answered), relevant (on-topic), and hallucination_risk. "
+            "Also check the method: comparing periods of different lengths (a full year vs a partial year), "
+            "or a date filter that misses part of the requested period, makes the answer NOT grounded. "
             "An honest 'the sources don't say' counts as grounded. In feedback, list concrete problems and "
             "what information is missing, or 'OK' if none.")
 

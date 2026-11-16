@@ -162,8 +162,11 @@ body {
 .md code { font-family: var(--font-mono); font-size: 12px; background: var(--hover); padding: 1px 4px; border-radius: 3px; }
 .md pre { background: var(--hover); padding: 12px; border-radius: 4px; overflow-x: auto; }
 .md pre code { background: none; padding: 0; }
-.md table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.md th, .md td { border: 1px solid var(--line); padding: 4px 8px; }
+.md table { border-collapse: collapse; font-variant-numeric: tabular-nums; display: block; max-width: 100%; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--line); padding: 6px 12px; text-align: left; }
+.md th { background: var(--nav); font-weight: 600; font-size: 12px; color: var(--text-2); }
+.md td[align="right"], .md th[align="right"] { text-align: right; }
+.md tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--hover) 50%, transparent); }
 .md blockquote { border-left: 3px solid var(--line); padding-left: 12px; color: var(--text-2); }
 
 /* native <dialog> backdrop */

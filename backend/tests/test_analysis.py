@@ -101,3 +101,14 @@ def test_seasonal_business_flags_real_dip_not_january():
     assert a["metric"] == "revenue"  # money beats unit counts
     assert "Riverside fell 29.3% in 2026-07 (vs 2025-07, same month last year)" in h
     assert "in 2026-01" not in h  # the post-holiday January dip is normal, not flagged
+
+
+def test_detects_lasting_step_change():
+    rows = ["month,category,amount"]
+    for m in range(1, 11):
+        rows.append(f"2026-{m:02d},Green coffee,{26500 * (1.18 if m >= 4 else 1) * (1 + (m % 3 - 1) * 0.01):.0f}")
+        rows.append(f"2026-{m:02d},Rent,{52000 + (m % 2) * 300}")
+        rows.append(f"2026-{m:02d},Packaging,{5200 * (1 + m * 0.12):.0f}")  # gradual ramp, not a step
+    a = analysis.analyze(sheet("an-step.csv", rows), None)
+    shifts = [f["headline"] for f in a["findings"] if f["kind"] == "shift"]
+    assert shifts and shifts[0].startswith("Green coffee stepped up 18% from 2026-04")

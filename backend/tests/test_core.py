@@ -29,7 +29,10 @@ def test_redact():
 
 def test_infer_type_and_table_name():
     assert _column(["1", "2", None])[0] == "bigint"
-    assert _column(["1.5", "2"])[0] == "double precision"
+    assert _column(["1.5", "2"])[0] == "numeric"
+    assert _column(["2025-01", "2025-12"])[0] == "date"  # year-month text becomes real dates
+    from app.ingest import _clean_header
+    assert _clean_header(["Gross margin %", "Revenue ($)", "Order #"]) == ["gross_margin_pct", "revenue_usd", "order_number"]
     assert _column(["a", "2"])[0] == "text"
     assert table_name("Q3 Sales-2024.csv") == "q3_sales_2024"
     assert _column(["00123", "02134"])[0] == "text"  # ZIP codes keep their leading zeros

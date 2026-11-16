@@ -1,0 +1,316 @@
+date,location,rating,topic,comment
+2026-01-01,Online,5,Product,Love the new seasonal menu.
+2026-01-05,Riverside,5,Product,Cold brew is excellent.
+2026-01-06,Airport,5,Service,Pricey but good for an airport.
+2026-01-06,Online,5,Product,Cold brew is excellent.
+2026-01-07,Online,4,Product,Cold brew is excellent.
+2026-01-08,Airport,3,Service,Quick service before my flight.
+2026-01-09,Riverside,5,Product,Best oat latte in town.
+2026-01-10,Airport,3,Service,Pricey but good for an airport.
+2026-01-10,Online,4,Product,Fast even at rush hour.
+2026-01-11,Airport,5,Service,Quick service before my flight.
+2026-01-11,Online,4,Product,"Friendly staff, always remember my order."
+2026-01-12,Airport,5,Service,Pricey but good for an airport.
+2026-01-12,Downtown,4,Product,Love the new seasonal menu.
+2026-01-13,Riverside,5,Product,Cold brew is excellent.
+2026-01-18,Riverside,4,Product,Pastries are always fresh.
+2026-01-19,Riverside,4,Product,Pastries are always fresh.
+2026-01-20,Airport,4,Service,Quick service before my flight.
+2026-01-21,Airport,3,Service,Pricey but good for an airport.
+2026-01-21,Airport,3,Service,Pricey but good for an airport.
+2026-01-22,Online,5,Product,Love the new seasonal menu.
+2026-01-23,Airport,4,Service,Pricey but good for an airport.
+2026-01-24,Downtown,5,Product,Cold brew is excellent.
+2026-01-25,Online,5,Product,Fast even at rush hour.
+2026-01-26,Downtown,4,Product,Cold brew is excellent.
+2026-01-26,Downtown,3,Wait time,Mobile order wasn't ready when promised.
+2026-01-27,Airport,4,Service,Pricey but good for an airport.
+2026-01-28,Online,5,Product,Fast even at rush hour.
+2026-01-29,Online,5,Product,Pastries are always fresh.
+2026-01-29,Riverside,5,Product,Best oat latte in town.
+2026-01-30,Online,5,Product,Fast even at rush hour.
+2026-01-30,Airport,4,Service,Pricey but good for an airport.
+2026-02-01,Downtown,5,Product,Pastries are always fresh.
+2026-02-01,Downtown,5,Product,Best oat latte in town.
+2026-02-02,Downtown,3,Wait time,"Line was out the door on Monday morning, waited 15 minutes."
+2026-02-02,Airport,4,Service,Pricey but good for an airport.
+2026-02-03,Downtown,5,Product,Pastries are always fresh.
+2026-02-04,Airport,4,Service,Pricey but good for an airport.
+2026-02-04,Online,4,Product,Pastries are always fresh.
+2026-02-05,Riverside,5,Product,Best oat latte in town.
+2026-02-07,Downtown,5,Product,"Friendly staff, always remember my order."
+2026-02-09,Downtown,5,Product,Cold brew is excellent.
+2026-02-09,Online,5,Product,Cold brew is excellent.
+2026-02-10,Online,5,Product,Best oat latte in town.
+2026-02-10,Riverside,5,Product,Cold brew is excellent.
+2026-02-11,Riverside,5,Product,Pastries are always fresh.
+2026-02-11,Online,5,Product,Best oat latte in town.
+2026-02-12,Riverside,4,Product,Great spot to work for an hour.
+2026-02-14,Airport,4,Service,Pricey but good for an airport.
+2026-02-14,Downtown,5,Product,Best oat latte in town.
+2026-02-15,Online,5,Product,"Friendly staff, always remember my order."
+2026-02-15,Riverside,5,Product,"Friendly staff, always remember my order."
+2026-02-17,Online,5,Product,Best oat latte in town.
+2026-02-17,Riverside,5,Product,Love the new seasonal menu.
+2026-02-18,Downtown,5,Product,Cold brew is excellent.
+2026-02-19,Airport,4,Service,Pricey but good for an airport.
+2026-02-20,Airport,3,Service,Pricey but good for an airport.
+2026-02-20,Riverside,4,Product,Love the new seasonal menu.
+2026-02-21,Riverside,4,Product,Best oat latte in town.
+2026-02-22,Online,5,Product,Cold brew is excellent.
+2026-02-23,Online,5,Product,Pastries are always fresh.
+2026-02-23,Online,5,Product,Best oat latte in town.
+2026-02-24,Online,5,Product,Great spot to work for an hour.
+2026-02-24,Airport,5,Service,Pricey but good for an airport.
+2026-02-25,Downtown,5,Product,Love the new seasonal menu.
+2026-02-25,Online,4,Product,Best oat latte in town.
+2026-02-26,Riverside,5,Product,Love the new seasonal menu.
+2026-02-27,Downtown,5,Product,Great spot to work for an hour.
+2026-03-01,Online,4,Product,"Friendly staff, always remember my order."
+2026-03-02,Downtown,4,Product,Fast even at rush hour.
+2026-03-02,Online,5,Product,Great spot to work for an hour.
+2026-03-04,Online,5,Product,Fast even at rush hour.
+2026-03-05,Riverside,4,Product,Fast even at rush hour.
+2026-03-05,Downtown,5,Product,Love the new seasonal menu.
+2026-03-07,Online,5,Product,"Friendly staff, always remember my order."
+2026-03-08,Online,5,Product,Love the new seasonal menu.
+2026-03-08,Online,5,Product,Fast even at rush hour.
+2026-03-09,Online,4,Product,Love the new seasonal menu.
+2026-03-09,Airport,3,Service,Pricey but good for an airport.
+2026-03-10,Online,5,Product,Best oat latte in town.
+2026-03-10,Riverside,5,Product,Pastries are always fresh.
+2026-03-11,Online,5,Product,"Friendly staff, always remember my order."
+2026-03-11,Downtown,5,Product,Best oat latte in town.
+2026-03-12,Airport,3,Service,"Open early, which I appreciate."
+2026-03-13,Riverside,5,Product,Fast even at rush hour.
+2026-03-14,Online,5,Product,Love the new seasonal menu.
+2026-03-15,Riverside,5,Product,"Friendly staff, always remember my order."
+2026-03-17,Downtown,5,Product,Fast even at rush hour.
+2026-03-18,Downtown,5,Product,Love the new seasonal menu.
+2026-03-20,Downtown,5,Product,Best oat latte in town.
+2026-03-22,Downtown,4,Product,"Friendly staff, always remember my order."
+2026-03-23,Online,5,Product,"Friendly staff, always remember my order."
+2026-03-23,Airport,4,Service,Pricey but good for an airport.
+2026-03-24,Riverside,5,Product,Great spot to work for an hour.
+2026-03-24,Riverside,5,Product,Love the new seasonal menu.
+2026-03-25,Downtown,5,Product,Best oat latte in town.
+2026-03-26,Riverside,5,Product,"Friendly staff, always remember my order."
+2026-03-26,Airport,3,Service,"Open early, which I appreciate."
+2026-03-27,Airport,4,Service,Quick service before my flight.
+2026-03-28,Airport,3,Service,"Open early, which I appreciate."
+2026-03-28,Online,4,Product,Best oat latte in town.
+2026-03-29,Riverside,5,Product,Cold brew is excellent.
+2026-03-30,Riverside,4,Product,Cold brew is excellent.
+2026-04-01,Riverside,5,Product,Love the new seasonal menu.
+2026-04-01,Downtown,5,Product,Pastries are always fresh.
+2026-04-02,Online,5,Product,Great spot to work for an hour.
+2026-04-03,Riverside,5,Product,"Friendly staff, always remember my order."
+2026-04-04,Riverside,4,Product,Cold brew is excellent.
+2026-04-05,Riverside,4,Product,Love the new seasonal menu.
+2026-04-07,Online,5,Product,Fast even at rush hour.
+2026-04-08,Riverside,5,Product,"Friendly staff, always remember my order."
+2026-04-09,Riverside,5,Product,Cold brew is excellent.
+2026-04-11,Airport,3,Service,Quick service before my flight.
+2026-04-11,Online,4,Product,"Friendly staff, always remember my order."
+2026-04-13,Online,5,Product,Love the new seasonal menu.
+2026-04-14,Airport,3,Service,Quick service before my flight.
+2026-04-15,Airport,4,Service,"Open early, which I appreciate."
+2026-04-16,Riverside,4,Product,Love the new seasonal menu.
+2026-04-17,Airport,4,Service,Quick service before my flight.
+2026-04-18,Airport,3,Service,Quick service before my flight.
+2026-04-19,Downtown,5,Product,Cold brew is excellent.
+2026-04-19,Online,5,Product,"Friendly staff, always remember my order."
+2026-04-20,Airport,4,Service,"Open early, which I appreciate."
+2026-04-22,Online,5,Product,Love the new seasonal menu.
+2026-04-22,Airport,5,Service,Pricey but good for an airport.
+2026-04-23,Downtown,5,Product,Best oat latte in town.
+2026-04-24,Airport,3,Service,"Open early, which I appreciate."
+2026-04-24,Online,4,Product,Fast even at rush hour.
+2026-04-25,Riverside,5,Product,Cold brew is excellent.
+2026-04-26,Online,5,Product,Great spot to work for an hour.
+2026-04-27,Airport,5,Service,Pricey but good for an airport.
+2026-04-28,Online,4,Product,Fast even at rush hour.
+2026-04-29,Airport,4,Service,"Open early, which I appreciate."
+2026-04-30,Airport,3,Service,Pricey but good for an airport.
+2026-05-01,Riverside,4,Product,Love the new seasonal menu.
+2026-05-01,Downtown,5,Product,"Friendly staff, always remember my order."
+2026-05-03,Riverside,4,Product,Pastries are always fresh.
+2026-05-03,Airport,5,Service,Quick service before my flight.
+2026-05-04,Downtown,5,Product,"Friendly staff, always remember my order."
+2026-05-05,Riverside,5,Product,Great spot to work for an hour.
+2026-05-06,Airport,4,Service,Pricey but good for an airport.
+2026-05-07,Downtown,4,Product,"Friendly staff, always remember my order."
+2026-05-08,Online,4,Product,Pastries are always fresh.
+2026-05-09,Downtown,5,Product,Cold brew is excellent.
+2026-05-10,Airport,4,Service,Quick service before my flight.
+2026-05-12,Downtown,5,Product,Great spot to work for an hour.
+2026-05-12,Downtown,5,Product,Fast even at rush hour.
+2026-05-13,Riverside,5,Product,Great spot to work for an hour.
+2026-05-14,Riverside,5,Product,Best oat latte in town.
+2026-05-14,Online,5,Product,Pastries are always fresh.
+2026-05-15,Online,5,Product,Fast even at rush hour.
+2026-05-16,Airport,3,Service,Pricey but good for an airport.
+2026-05-17,Airport,5,Service,"Open early, which I appreciate."
+2026-05-18,Airport,4,Service,Pricey but good for an airport.
+2026-05-18,Downtown,5,Product,Best oat latte in town.
+2026-05-19,Riverside,5,Product,Great spot to work for an hour.
+2026-05-21,Downtown,4,Product,Love the new seasonal menu.
+2026-05-21,Online,4,Product,Pastries are always fresh.
+2026-05-22,Riverside,5,Product,Cold brew is excellent.
+2026-05-23,Online,5,Product,Best oat latte in town.
+2026-05-24,Online,5,Product,"Friendly staff, always remember my order."
+2026-05-24,Online,4,Product,Best oat latte in town.
+2026-05-27,Downtown,5,Product,Best oat latte in town.
+2026-05-28,Riverside,5,Product,Best oat latte in town.
+2026-05-30,Riverside,5,Product,Fast even at rush hour.
+2026-06-01,Online,5,Product,Great spot to work for an hour.
+2026-06-05,Riverside,5,Product,"Friendly staff, always remember my order."
+2026-06-06,Downtown,5,Product,"Friendly staff, always remember my order."
+2026-06-06,Downtown,5,Product,Love the new seasonal menu.
+2026-06-08,Airport,3,Service,Pricey but good for an airport.
+2026-06-08,Airport,4,Service,Pricey but good for an airport.
+2026-06-10,Airport,5,Service,Pricey but good for an airport.
+2026-06-11,Downtown,5,Product,"Friendly staff, always remember my order."
+2026-06-11,Online,4,Product,Love the new seasonal menu.
+2026-06-13,Airport,3,Service,"Open early, which I appreciate."
+2026-06-14,Riverside,4,Product,Great spot to work for an hour.
+2026-06-15,Riverside,5,Product,Love the new seasonal menu.
+2026-06-16,Online,5,Product,Pastries are always fresh.
+2026-06-19,Downtown,5,Product,Love the new seasonal menu.
+2026-06-23,Airport,4,Service,"Open early, which I appreciate."
+2026-06-25,Online,4,Product,Pastries are always fresh.
+2026-06-26,Riverside,5,Product,Love the new seasonal menu.
+2026-06-27,Online,5,Product,"Friendly staff, always remember my order."
+2026-06-27,Online,5,Product,"Friendly staff, always remember my order."
+2026-06-28,Riverside,5,Product,Fast even at rush hour.
+2026-06-30,Online,5,Product,Fast even at rush hour.
+2026-06-30,Downtown,5,Product,Fast even at rush hour.
+2026-07-01,Online,5,Product,Great spot to work for an hour.
+2026-07-02,Downtown,4,Product,Fast even at rush hour.
+2026-07-03,Riverside,5,Product,Cold brew is excellent.
+2026-07-03,Downtown,4,Product,Cold brew is excellent.
+2026-07-04,Online,5,Product,Fast even at rush hour.
+2026-07-04,Online,5,Product,"Friendly staff, always remember my order."
+2026-07-05,Online,5,Product,Great spot to work for an hour.
+2026-07-06,Riverside,4,Product,Love the new seasonal menu.
+2026-07-07,Downtown,5,Product,Great spot to work for an hour.
+2026-07-07,Airport,5,Service,"Open early, which I appreciate."
+2026-07-08,Downtown,5,Product,Pastries are always fresh.
+2026-07-10,Riverside,1,Access and parking,Had to walk two blocks because of the detour.
+2026-07-11,Online,5,Product,Love the new seasonal menu.
+2026-07-11,Online,4,Product,"Friendly staff, always remember my order."
+2026-07-12,Airport,5,Service,"Open early, which I appreciate."
+2026-07-13,Downtown,5,Product,Best oat latte in town.
+2026-07-14,Airport,4,Service,Pricey but good for an airport.
+2026-07-15,Airport,5,Service,Quick service before my flight.
+2026-07-15,Airport,4,Service,Quick service before my flight.
+2026-07-16,Online,4,Product,Pastries are always fresh.
+2026-07-16,Airport,5,Service,Quick service before my flight.
+2026-07-17,Downtown,4,Product,Best oat latte in town.
+2026-07-18,Riverside,2,Access and parking,Construction made it hard to get to the café.
+2026-07-18,Downtown,4,Product,Pastries are always fresh.
+2026-07-19,Online,5,Product,Fast even at rush hour.
+2026-07-20,Riverside,2,Access and parking,Had to walk two blocks because of the detour.
+2026-07-22,Online,5,Product,"Friendly staff, always remember my order."
+2026-07-23,Riverside,3,Access and parking,Had to walk two blocks because of the detour.
+2026-07-23,Airport,4,Service,"Open early, which I appreciate."
+2026-07-24,Online,4,Product,Fast even at rush hour.
+2026-07-25,Riverside,1,Access and parking,Had to walk two blocks because of the detour.
+2026-07-25,Online,5,Product,"Friendly staff, always remember my order."
+2026-07-26,Riverside,3,Access and parking,Love this place but the construction noise was bad today.
+2026-07-26,Downtown,5,Product,Love the new seasonal menu.
+2026-07-27,Airport,4,Service,Pricey but good for an airport.
+2026-07-27,Riverside,2,Access and parking,Had to walk two blocks because of the detour.
+2026-07-28,Riverside,1,Access and parking,Had to walk two blocks because of the detour.
+2026-07-29,Downtown,5,Product,Fast even at rush hour.
+2026-07-30,Airport,4,Service,Quick service before my flight.
+2026-08-01,Airport,3,Service,Pricey but good for an airport.
+2026-08-02,Riverside,2,Access and parking,Had to walk two blocks because of the detour.
+2026-08-03,Online,5,Product,Cold brew is excellent.
+2026-08-03,Downtown,5,Product,Great spot to work for an hour.
+2026-08-05,Online,4,Product,Cold brew is excellent.
+2026-08-07,Riverside,3,Access and parking,Construction made it hard to get to the café.
+2026-08-07,Airport,5,Service,Quick service before my flight.
+2026-08-09,Online,5,Product,Best oat latte in town.
+2026-08-09,Downtown,4,Product,Great spot to work for an hour.
+2026-08-10,Riverside,5,Product,Cold brew is excellent.
+2026-08-11,Riverside,5,Product,Pastries are always fresh.
+2026-08-12,Airport,4,Service,Pricey but good for an airport.
+2026-08-12,Airport,5,Service,Pricey but good for an airport.
+2026-08-13,Riverside,3,Access and parking,Couldn't find parking because of the road work on Front Street.
+2026-08-14,Downtown,5,Product,Best oat latte in town.
+2026-08-14,Riverside,1,Access and parking,Love this place but the construction noise was bad today.
+2026-08-15,Airport,4,Service,"Open early, which I appreciate."
+2026-08-16,Downtown,5,Product,Fast even at rush hour.
+2026-08-18,Riverside,5,Product,Pastries are always fresh.
+2026-08-19,Airport,3,Service,"Open early, which I appreciate."
+2026-08-21,Online,5,Product,Pastries are always fresh.
+2026-08-22,Airport,4,Service,Pricey but good for an airport.
+2026-08-22,Online,5,Product,Fast even at rush hour.
+2026-08-23,Riverside,3,Access and parking,Love this place but the construction noise was bad today.
+2026-08-23,Online,5,Product,Fast even at rush hour.
+2026-08-25,Riverside,5,Product,Great spot to work for an hour.
+2026-08-25,Downtown,4,Product,Love the new seasonal menu.
+2026-08-26,Riverside,4,Product,Cold brew is excellent.
+2026-08-26,Downtown,5,Product,Fast even at rush hour.
+2026-08-27,Airport,5,Service,Pricey but good for an airport.
+2026-08-28,Online,5,Product,"Friendly staff, always remember my order."
+2026-08-29,Downtown,5,Product,Best oat latte in town.
+2026-08-29,Riverside,1,Access and parking,Construction made it hard to get to the café.
+2026-08-30,Riverside,4,Product,Best oat latte in town.
+2026-08-31,Airport,4,Service,Quick service before my flight.
+2026-08-31,Riverside,5,Product,Pastries are always fresh.
+2026-09-01,Online,2,Shipping,Shipping took over a week this time.
+2026-09-02,Downtown,5,Product,Cold brew is excellent.
+2026-09-02,Online,3,Shipping,Tracking said delivered but it came three days later.
+2026-09-04,Riverside,4,Product,Great spot to work for an hour.
+2026-09-06,Airport,5,Service,Quick service before my flight.
+2026-09-06,Airport,4,Service,Pricey but good for an airport.
+2026-09-07,Online,5,Product,Best oat latte in town.
+2026-09-08,Downtown,4,Product,Best oat latte in town.
+2026-09-09,Online,3,Shipping,My subscription box arrived 5 days late.
+2026-09-11,Airport,3,Service,Pricey but good for an airport.
+2026-09-15,Downtown,4,Product,Best oat latte in town.
+2026-09-15,Riverside,5,Product,"Friendly staff, always remember my order."
+2026-09-17,Online,5,Product,Pastries are always fresh.
+2026-09-18,Airport,4,Service,Quick service before my flight.
+2026-09-22,Downtown,5,Product,Great spot to work for an hour.
+2026-09-23,Downtown,5,Product,Fast even at rush hour.
+2026-09-24,Airport,4,Service,"Open early, which I appreciate."
+2026-09-25,Downtown,5,Product,Best oat latte in town.
+2026-09-27,Airport,4,Service,"Open early, which I appreciate."
+2026-09-27,Riverside,5,Product,Cold brew is excellent.
+2026-09-28,Downtown,3,Wait time,Slow during the 8am rush.
+2026-09-29,Online,2,Shipping,Shipping took over a week this time.
+2026-09-29,Online,4,Product,"Friendly staff, always remember my order."
+2026-09-30,Riverside,5,Product,Love the new seasonal menu.
+2026-09-30,Downtown,4,Product,Great spot to work for an hour.
+2026-10-02,Riverside,5,Product,Great spot to work for an hour.
+2026-10-04,Downtown,5,Product,Love the new seasonal menu.
+2026-10-04,Riverside,5,Product,Best oat latte in town.
+2026-10-06,Airport,5,Service,Quick service before my flight.
+2026-10-07,Downtown,5,Product,Cold brew is excellent.
+2026-10-09,Airport,4,Service,Pricey but good for an airport.
+2026-10-09,Downtown,4,Product,Best oat latte in town.
+2026-10-10,Online,5,Product,Pastries are always fresh.
+2026-10-11,Downtown,5,Product,Love the new seasonal menu.
+2026-10-12,Online,5,Product,Cold brew is excellent.
+2026-10-14,Riverside,5,Product,Best oat latte in town.
+2026-10-15,Airport,3,Service,Pricey but good for an airport.
+2026-10-15,Riverside,4,Product,Great spot to work for an hour.
+2026-10-16,Downtown,5,Product,Great spot to work for an hour.
+2026-10-17,Airport,3,Service,"Open early, which I appreciate."
+2026-10-17,Online,5,Product,Fast even at rush hour.
+2026-10-18,Riverside,5,Product,Pastries are always fresh.
+2026-10-19,Airport,4,Service,"Open early, which I appreciate."
+2026-10-20,Downtown,5,Product,Love the new seasonal menu.
+2026-10-20,Riverside,4,Product,Pastries are always fresh.
+2026-10-22,Online,5,Product,Cold brew is excellent.
+2026-10-22,Online,4,Product,Best oat latte in town.
+2026-10-24,Airport,5,Service,"Open early, which I appreciate."
+2026-10-26,Downtown,3,Wait time,"Line was out the door on Monday morning, waited 15 minutes."
+2026-10-27,Airport,3,Service,Quick service before my flight.
+2026-10-27,Airport,3,Service,Quick service before my flight.
+2026-10-28,Downtown,5,Product,Fast even at rush hour.
+2026-10-29,Riverside,5,Product,Cold brew is excellent.
+2026-10-30,Airport,4,Service,Quick service before my flight.

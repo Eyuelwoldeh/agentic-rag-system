@@ -25,7 +25,7 @@ export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<
 export type RawChart = { id: string; type: "line" | "bar" | "number" | "table"; title: string; x: string | null; y: string[];
   source: string; sql: string; columns: string[]; rows: unknown[][]; truncated?: boolean };
 
-export type Source = { label: string; kind: "doc" | "web"; source?: string; updated_at?: string; document?: string; page?: number; content?: string; url?: string; title?: string };
+export type Source = { label: string; kind: "doc" | "web"; document_id?: number; source?: string; updated_at?: string; document?: string; page?: number; content?: string; url?: string; title?: string };
 
 export type AgentEvent =
   | { type: "text"; text: string }
@@ -36,13 +36,14 @@ export type AgentEvent =
   | { type: "critic"; attempt: number; passed: boolean; grounded: boolean; complete: boolean; relevant: boolean; hallucination_risk: string; feedback: string }
   | { type: "revising"; attempt: number }
   | { type: "restart"; reason: string }
+  | { type: "conversation"; id: number }
   | { type: "chart"; chart: RawChart }
   | { type: "error"; message: string }
-  | { type: "done"; run_id: number; answer: string; latency_ms: number; attempts: number; verified: boolean; input_tokens: number; output_tokens: number };
+  | { type: "done"; run_id: number; answer: string; latency_ms: number; attempts: number; verified: boolean; input_tokens: number; output_tokens: number; memory?: string };
 
 /** POST a question and yield server-sent events as they arrive. */
-export async function* streamChat(question: string, history: { role: string; content: string }[], analyze?: string): AsyncGenerator<AgentEvent> {
-  const res = await api("/api/chat", { method: "POST", body: JSON.stringify({ question, history, analyze }) });
+export async function* streamChat(question: string, history: { role: string; content: string }[], analyze?: string, conversationId?: number): AsyncGenerator<AgentEvent> {
+  const res = await api("/api/chat", { method: "POST", body: JSON.stringify({ question, history, analyze, conversation_id: conversationId }) });
   if (!res.ok || !res.body) throw new Error(`Request failed: ${res.status} ${await res.text()}`);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";

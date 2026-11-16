@@ -120,17 +120,25 @@ def test_sql_to_chart_flow():
         cols = json.loads(tools.execute("describe_tables", {"source": "uploads", "tables": ["chart_sales", "nope"]}, ctx))
         assert cols["tables"]["chart_sales"]["revenue"] == "bigint" and cols["unknown"] == ["nope"]
         out = json.loads(tools.execute("run_sql", {"source": "uploads", "query": "SELECT month, revenue FROM chart_sales ORDER BY month"}, ctx))
-        assert out["result_id"] == "R1" and out["row_count"] == 3
-        msg = tools.execute("create_chart", {"result_id": "R1", "type": "line", "title": "Revenue by month", "x": "month", "y": ["revenue"]}, ctx)
-        assert "C1" in msg and ctx.charts[0]["sql"].startswith("SELECT month") and ctx.charts[0]["source"] == "uploads"
+        rid = out["result_id"]
+        assert rid.startswith("R") and len(rid) == 7 and out["row_count"] == 3
+        msg = tools.execute("create_chart", {"result_id": rid, "type": "line", "title": "Revenue by month", "x": "month", "y": ["revenue"]}, ctx)
+        assert "chart is now shown" in msg and "C1" not in msg and ctx.charts[0]["sql"].startswith("SELECT month") and ctx.charts[0]["source"] == "uploads"
         with pytest.raises(ValueError, match="not in result"):
-            tools.execute("create_chart", {"result_id": "R1", "type": "bar", "title": "x", "x": "month", "y": ["profit"]}, ctx)
+            tools.execute("create_chart", {"result_id": rid, "type": "bar", "title": "x", "x": "month", "y": ["profit"]}, ctx)
         with pytest.raises(ValueError, match="numeric"):
-            tools.execute("create_chart", {"result_id": "R1", "type": "bar", "title": "x", "x": "revenue", "y": ["month"]}, ctx)
+            tools.execute("create_chart", {"result_id": rid, "type": "bar", "title": "x", "x": "revenue", "y": ["month"]}, ctx)
         # SUM/AVG return NUMERIC (Decimal) in Postgres: must still chart as numbers, dates as ISO strings
         kpi = json.loads(tools.execute("run_sql", {"source": "uploads", "query": "SELECT sum(revenue) AS total, avg(revenue) AS mean, DATE '2026-01-31' AS asof FROM chart_sales"}, ctx))
         assert kpi["rows"] == [[330, 110, "2026-01-31"]]
         tools.execute("create_chart", {"result_id": kpi["result_id"], "type": "number", "title": "Total", "y": ["total"]}, ctx)
+        # a query from an earlier turn is reusable in a new turn (fresh context), by the same person only
+        later = tools.Ctx(email="ana@acme.test")
+        assert "chart is now shown" in tools.execute("create_chart", {"result_id": rid, "type": "bar", "title": "Again", "x": "month", "y": ["revenue"]}, later)
+        assert later.charts[0]["rows"][0][1] == 100  # re-ran the stored SQL
+        with pytest.raises(ValueError, match="Unknown result_id"):
+            tools.execute("create_chart", {"result_id": rid, "type": "bar", "title": "x", "x": "month", "y": ["revenue"]}, tools.Ctx(email="eve@acme.test"))
+        assert rid in tools.memory_note(ctx) and "chart_sales" in tools.memory_note(ctx)
         with pytest.raises(ValueError, match="Unknown result_id"):
             tools.execute("create_chart", {"result_id": "R9", "type": "number", "title": "x", "y": ["revenue"]}, ctx)
     finally:
@@ -146,3 +154,25 @@ def test_tool_input_validation():
     assert not valid_input({"result_id": "R1", "type": "bar", "title": "t", "y": "b"}, chart)  # wrong type
     assert not valid_input({"query": "x", "k": "5"}, SCHEMAS["search_documents"])
     assert not valid_input({"query": "x", "evil": 1}, SCHEMAS["search_documents"])
+
+
+def test_strip_ids_and_date_coverage():
+    assert tools.strip_ids("Revenue fell [Rd7ea5b]. Chart [C1] and [Ra16280, Rb8b5ae] done; see [S2].") == "Revenue fell. Chart and done; see [S2]."
+    ingest_csv("cov_sales.csv", b"date,revenue\n2025-01-15,10\n2026-10-31,20\n")
+    try:
+        out = json.loads(tools.execute("describe_tables", {"source": "uploads", "tables": ["cov_sales"]}, tools.Ctx(email="a@acme.test")))
+        assert out["date_coverage"]["cov_sales.date"] == {"from": "2025-01-15", "to": "2026-10-31"}
+    finally:
+        with connect() as conn:
+            conn.execute("DROP TABLE IF EXISTS data.cov_sales")
+
+
+def test_search_filter_falls_back_to_all_sources():
+    from app.ingest import ingest_document
+    d = ingest_document("fallback-memo.md", b"The Zanzibar route closure explains the dip.")
+    try:
+        out = tools.execute("search_documents", {"query": "Zanzibar route closure", "source": "slack"}, tools.Ctx())
+        assert "Nothing matched in slack" in out and "Zanzibar" in out
+    finally:
+        with connect() as conn:
+            conn.execute("DELETE FROM documents WHERE id = %s", (d["id"],))

@@ -86,6 +86,6 @@ def visible_tables(email: str | None) -> dict[str, dict]:
     """name → {title, source} for tables this person may query."""
     with connect() as conn:
         names = _visible_tables(conn, email)
-        rows = conn.execute("SELECT name, title, source, allowed IS NOT NULL FROM data_tables WHERE name = ANY(%s)",
-                            (names,)).fetchall()
-    return {r[0]: {"title": r[1], "source": r[2], "restricted": r[3]} for r in rows}
+        rows = conn.execute("SELECT name, title, source, allowed IS NOT NULL, replaced_at, change_note FROM data_tables "
+                            "WHERE name = ANY(%s)", (names,)).fetchall()
+    return {r[0]: {"title": r[1], "source": r[2], "restricted": r[3], "replaced_at": r[4], "change_note": r[5]} for r in rows}

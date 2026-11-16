@@ -42,7 +42,7 @@ def test_pin_view_share_delete(data):
     ana, bo = login("dash-ana@acme.test"), login("dash-bo@acme.test")
     tid = ana.post("/api/dashboard/tiles", json=TILE).json()["id"]
     d = ana.get(f"/api/dashboard/tiles/{tid}/data").json()
-    assert d["rows"] == [["2026-01", 100], ["2026-02", 140]] and d["spec"]["type"] == "line"
+    assert d["rows"] == [["2026-01-01", 100], ["2026-02-01", 140]] and d["spec"]["type"] == "line"  # months are real dates
 
     assert tid not in [t["id"] for t in bo.get("/api/dashboard").json()]  # private by default
     assert bo.get(f"/api/dashboard/tiles/{tid}/data").status_code == 404
@@ -50,7 +50,7 @@ def test_pin_view_share_delete(data):
 
     assert ana.patch(f"/api/dashboard/tiles/{tid}", json={"shared": True}).status_code == 200
     assert tid in [t["id"] for t in bo.get("/api/dashboard").json()]
-    assert bo.get(f"/api/dashboard/tiles/{tid}/data").json()["rows"][1] == ["2026-02", 140]
+    assert bo.get(f"/api/dashboard/tiles/{tid}/data").json()["rows"][1] == ["2026-02-01", 140]
     assert bo.delete(f"/api/dashboard/tiles/{tid}").status_code == 403  # shared ≠ editable
     assert ana.delete(f"/api/dashboard/tiles/{tid}").status_code == 200
 

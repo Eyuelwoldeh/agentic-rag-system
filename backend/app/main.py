@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import agent, auth, connectors, dashboards, datasources, insights, llm, oauth, tableacl
+from . import agent, auth, connectors, conversations, dashboards, datasources, insights, llm, notify, oauth, previews, schedules, tableacl, versions
 from .db import connect, migrate
 from .ingest import drop_tables, ingest_document, ingest_spreadsheet
 from .security import FRONTEND_URL, User, csrf_middleware, current_user, require_admin
@@ -17,6 +17,7 @@ from .security import FRONTEND_URL, User, csrf_middleware, current_user, require
 async def lifespan(_app):
     migrate()
     connectors.start_scheduler()
+    schedules.start()
     yield
 
 
@@ -28,6 +29,9 @@ app.include_router(auth.router)
 app.include_router(oauth.router)
 app.include_router(dashboards.router)
 app.include_router(insights.router)
+app.include_router(previews.router)
+app.include_router(conversations.router)
+app.include_router(notify.router)
 
 MAX_UPLOAD = 25 * 1024 * 1024
 DOC_TYPES = (".pdf", ".txt", ".md")
@@ -38,20 +42,27 @@ SHEET_TYPES = (".csv", ".xlsx", ".xlsm")
 
 class Turn(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(max_length=20000)
+    content: str = Field(max_length=30000)  # answer text plus its hidden "queries behind this answer" note
 
 
 class ChatRequest(BaseModel):
     question: str
     history: list[Turn] = Field(default_factory=list, max_length=20)
     analyze: str | None = Field(None, pattern=r"^[a-z0-9_]{1,63}$")  # spreadsheet table for the Analyze button
+    conversation_id: int | None = None  # continue a saved conversation; omitted = start a new one
 
 
 @app.post("/api/chat")
 def chat(req: ChatRequest, user: User = Depends(current_user)):
+    if req.conversation_id:
+        conversations.owned(req.conversation_id, user)  # 404 for someone else's conversation
+        conv_id, history = req.conversation_id, conversations.history(req.conversation_id)  # server-side context
+    else:
+        conv_id, history = conversations.create(user, req.question), [t.model_dump() for t in req.history]
+
     def sse():
-        for ev in agent.run(req.question, [t.model_dump() for t in req.history], user_id=user.id, email=user.email,
-                            analyze=req.analyze):
+        yield f"data: {json.dumps({'type': 'conversation', 'id': conv_id})}\n\n"
+        for ev in agent.run(req.question, history, user_id=user.id, email=user.email, analyze=req.analyze, conversation_id=conv_id):
             yield f"data: {json.dumps(ev, default=str)}\n\n"
 
     return StreamingResponse(sse(), media_type="text/event-stream")
@@ -69,9 +80,11 @@ async def upload(file: UploadFile, visibility: Literal["everyone", "private"] = 
     try:
         if name.lower().endswith(SHEET_TYPES):
             tables = ingest_spreadsheet(name, data, user_id=user.id, allowed=[user.email] if visibility == "private" else None)
+            previews.save_original(f"{user.id}:{name}", name, data, user.id)  # same identity the tables use
             return {"kind": "tables", "visibility": visibility, "tables": tables}
         if name.lower().endswith(DOC_TYPES):
             doc = ingest_document(name, data, user_id=user.id, allowed=[user.email] if visibility == "private" else None)
+            previews.save_original(f"{user.id}:{name}", name, data, user.id)
             return {"kind": "document", "visibility": visibility, **doc}
     except ValueError as e:
         raise HTTPException(422, str(e))
@@ -82,7 +95,7 @@ async def upload(file: UploadFile, visibility: Literal["everyone", "private"] = 
 def list_sources(user: User = Depends(current_user)):
     with connect() as conn:
         docs = conn.execute(
-            "SELECT d.id, d.name, count(c.id), d.created_at, d.uploaded_by = %s, d.allowed IS NOT NULL FROM documents d "
+            "SELECT d.id, d.name, count(c.id), d.created_at, d.uploaded_by = %s, d.allowed IS NOT NULL, d.replaced_at FROM documents d "
             "LEFT JOIN chunks c ON c.document_id = d.id WHERE d.source = 'upload' "
             "AND (d.allowed IS NULL OR %s = ANY(d.allowed)) GROUP BY d.id ORDER BY d.created_at DESC",
             (user.id, user.email)).fetchall()
@@ -92,20 +105,25 @@ def list_sources(user: User = Depends(current_user)):
     schemas = datasources.list_tables(datasources.UPLOADS, user.email)
     titles = tableacl.visible_tables(user.email)
     return {
-        "documents": [{"id": r[0], "name": r[1], "chunks": r[2], "created_at": r[3], "mine": r[4], "private": r[5]}
+        "documents": [{"id": r[0], "name": r[1], "chunks": r[2], "created_at": r[3], "mine": r[4], "private": r[5], "replaced_at": r[6]}
                       for r in docs],
         "tables": [{"name": t, "title": titles[t]["title"], "source": titles[t]["source"], "private": titles[t]["restricted"],
                     "mine": t in mine, "columns": cols, "rows": meta.get(t, (None, None, None))[1],
-                    "updated_at": meta.get(t, (None, None, None))[2]} for t, cols in schemas.items() if t in titles],
+                    "updated_at": meta.get(t, (None, None, None))[2], "replaced_at": titles[t].get("replaced_at")}
+                   for t, cols in schemas.items() if t in titles],
     }
 
 
 @app.delete("/api/tables/{name}")
 def delete_table(name: str, user: User = Depends(current_user)):
     """Admins can delete any uploaded spreadsheet; members only their own. Synced sheets go with their connection."""
+    with connect() as conn:
+        ext = conn.execute("SELECT external_id FROM data_tables WHERE name = %s", (name,)).fetchone()
     n = drop_tables("name = %s AND source = 'upload' AND (%s OR uploaded_by = %s)", (name, user.role == "admin", user.id))
     if not n:
         raise HTTPException(403, "You can only delete spreadsheets you uploaded")
+    if ext and ext[0]:
+        previews.delete_original(ext[0].split("::")[0])
     return {"ok": True}
 
 
@@ -114,10 +132,11 @@ def delete_document(doc_id: int, user: User = Depends(current_user)):
     """Admins can delete any upload; members only their own."""
     with connect() as conn:
         deleted = conn.execute(
-            "DELETE FROM documents WHERE id = %s AND source = 'upload' AND (%s OR uploaded_by = %s) RETURNING id",
+            "DELETE FROM documents WHERE id = %s AND source = 'upload' AND (%s OR uploaded_by = %s) RETURNING external_id",
             (doc_id, user.role == "admin", user.id)).fetchone()
     if not deleted:
         raise HTTPException(403, "You can only delete documents you uploaded")
+    previews.delete_original(deleted[0])
     return {"ok": True}
 
 
@@ -294,3 +313,49 @@ def ai_models(provider: Literal["anthropic", "openai"], _: User = Depends(requir
         return {"models": llm.list_models(provider)}
     except Exception as e:
         raise HTTPException(422, str(e)[:300])
+
+
+# ---------- replacing files in place ----------
+
+async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
+    data = await file.read(MAX_UPLOAD + 1)
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(413, "File too large (max 25MB)")
+    return (file.filename or "upload")[:200], data
+
+
+def _can_change(owner: int | None, user: User) -> None:
+    if user.role != "admin" and owner != user.id:
+        raise HTTPException(403, "You can only replace files you uploaded")
+
+
+@app.post("/api/documents/{doc_id}/replace")
+async def replace_document(doc_id: int, file: UploadFile, user: User = Depends(current_user)):
+    name, data = await _read_upload(file)
+    if not name.lower().endswith(DOC_TYPES):
+        raise HTTPException(415, f"Replace a document with another document ({', '.join(DOC_TYPES)})")
+    with connect() as conn:
+        row = conn.execute("SELECT uploaded_by FROM documents WHERE id = %s AND source = 'upload'", (doc_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Document not found")
+    _can_change(row[0], user)
+    try:
+        return versions.replace_document(doc_id, name, data, user.id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/tables/{table}/replace")
+async def replace_table(table: str, file: UploadFile, user: User = Depends(current_user)):
+    name, data = await _read_upload(file)
+    if not name.lower().endswith(SHEET_TYPES):
+        raise HTTPException(415, f"Replace a spreadsheet with another spreadsheet ({', '.join(SHEET_TYPES)})")
+    with connect() as conn:
+        row = conn.execute("SELECT uploaded_by FROM data_tables WHERE name = %s AND source = 'upload'", (table,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Spreadsheet not found")
+    _can_change(row[0], user)
+    try:
+        return versions.replace_spreadsheet(table, name, data, user.id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))

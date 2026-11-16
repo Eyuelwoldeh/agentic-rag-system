@@ -73,13 +73,14 @@ def upsert_document(
     if not rows:
         raise ValueError("No extractable text (scanned PDF? OCR is not supported)")
     vectors = embed([c for _, c in rows])
+    content = pages[0][1] if len(pages) == 1 else "\n\n".join(f"[Page {p}]\n{t.strip()}" for p, t in pages if t.strip())
     with connect() as conn, conn.transaction():
         doc_id = conn.execute(
-            "INSERT INTO documents (name, source, external_id, url, updated_at, connection_id, allowed, uploaded_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+            "INSERT INTO documents (name, source, external_id, url, updated_at, connection_id, allowed, uploaded_by, content) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (connection_id, external_id) DO UPDATE SET name = EXCLUDED.name, url = EXCLUDED.url, "
-            "updated_at = EXCLUDED.updated_at, allowed = EXCLUDED.allowed RETURNING id",
-            (name, source, external_id or name, url, updated_at, connection_id, allowed, uploaded_by),
+            "updated_at = EXCLUDED.updated_at, allowed = EXCLUDED.allowed, content = EXCLUDED.content RETURNING id",
+            (name, source, external_id or name, url, updated_at, connection_id, allowed, uploaded_by, content),
         ).fetchone()[0]
         conn.execute("DELETE FROM chunks WHERE document_id = %s", (doc_id,))
         with conn.cursor() as cur:
@@ -102,6 +103,7 @@ MAX_SHEET_ROWS = 500_000
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$")
 _US_DATE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+_YEAR_MONTH = re.compile(r"^(\d{4})-(\d{2})$")  # "2025-03" → March 1, 2025 (so date filters compare correctly)
 _NUMBER = re.compile(r"^[-+]?[$€£]?\s?[-+]?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?%?$")
 
 
@@ -129,6 +131,8 @@ def _date(v):
                 return datetime.datetime.fromisoformat(v.replace(" ", "T"))
             if m := _US_DATE.match(v):
                 return datetime.date(int(m[3]), int(m[1]), int(m[2]))
+            if m := _YEAR_MONTH.match(v):
+                return datetime.date(int(m[1]), int(m[2]), 1)
         except ValueError:
             return None
     return None
@@ -145,7 +149,7 @@ def _column(values: list) -> tuple[str, list]:
     if all(n is not None for n, v in zip(as_num, values) if v is not None):
         if all(isinstance(n, int) for n in as_num if n is not None):
             return "bigint", as_num
-        return "double precision", [None if n is None else float(n) for n in as_num]
+        return "numeric", [None if n is None else n for n in as_num]  # exact decimals: money sums correctly, ROUND() works
     dates = [_date(v) for v in present]
     if all(d is not None for d in dates):
         typ = "timestamp" if any(isinstance(d, datetime.datetime) for d in dates) else "date"
@@ -156,7 +160,8 @@ def _column(values: list) -> tuple[str, list]:
 def _clean_header(header: list) -> list[str]:
     cols, seen = [], {}
     for i, h in enumerate(header):
-        c = re.sub(r"\W+", "_", str(h or "").strip().lower()).strip("_")[:60] or f"col{i + 1}"
+        raw = str(h or "").strip().lower().replace("%", " pct").replace("#", " number").replace("$", " usd")  # keep units
+        c = re.sub(r"\W+", "_", raw).strip("_")[:60] or f"col{i + 1}"
         if c[0].isdigit():
             c = f"c_{c}"
         seen[c] = seen.get(c, 0) + 1
@@ -230,7 +235,8 @@ def ingest_spreadsheet(filename: str, data: bytes, *, user_id: int | None = None
                     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now()) ON CONFLICT (name) DO UPDATE SET title = EXCLUDED.title, "
                     "allowed = EXCLUDED.allowed, row_count = EXCLUDED.row_count, updated_at = now()",
                     (name, title, source, connection_id, ext, user_id, allowed, len(rows)))
-            results.append({"table": name, "title": title, "columns": {c: t for c, (t, _) in zip(cols, typed)}, "rows": len(rows)})
+            results.append({"table": name, "title": title, "external_id": ext,
+                            "columns": {c: t for c, (t, _) in zip(cols, typed)}, "rows": len(rows)})
     return results
 
 

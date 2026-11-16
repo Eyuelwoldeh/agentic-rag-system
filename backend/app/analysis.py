@@ -15,7 +15,7 @@ from . import datasources, tableacl
 from .tools import _jsonable, build_chart
 
 MAX_ROWS = 50_000
-NUMERIC = ("bigint", "integer", "smallint", "double precision", "numeric", "real")
+NUMERIC = ("bigint", "integer", "smallint", "double precision", "numeric", "real")  # spreadsheets use bigint / numeric
 METRIC_HINT = re.compile(r"revenue|sales|amount|total|profit|cost|price|value|spend|income|margin", re.I)  # money first
 COUNT_HINT = re.compile(r"units|qty|quantity|orders|count|transactions", re.I)
 TIME_HINT = re.compile(r"month|date|day|week|period|time|created|year|quarter", re.I)
@@ -200,6 +200,12 @@ def _segment_findings(segment, metric, time, series, col) -> list[dict]:
         if fast[1] - slow[1] >= 0.05:  # only a real gap is an insight
             out.append({"kind": "segment", "headline": f"Fastest growing {segment}: {fast[0]} ({fast[1] * 100:+.0f}% from {first_p} to {last_p})",
                         "detail": f"Slowest: {slow[0]} ({slow[1] * 100:+.0f}%)."})
+    # lasting level shifts (a price increase, a lost customer): the cleanest before/after step within a group
+    steps = sorted(filter(None, (_step(s_, ser) for s_, ser in per.items())), key=lambda x: -x[0])
+    for _, g, period, before, after in steps[:2]:
+        change = (after - before) / abs(before)
+        out.append({"kind": "shift", "headline": f"{g} {'stepped up' if change > 0 else 'stepped down'} {abs(change) * 100:.0f}% from {period} and stayed there",
+                    "detail": f"Average {compact(before)} per period before, {compact(after)} after. Usually a pricing, contract or customer change."})
     drops = sorted(((s_, *d) for s_, ser in per.items() for d in _drops(ser)), key=lambda d: d[3])  # dips totals hide
     reported = []
     for g, period, vs, change in drops:  # the two sharpest dips, from different groups
@@ -211,6 +217,27 @@ def _segment_findings(segment, metric, time, series, col) -> list[dict]:
         out.append({"kind": "anomaly", "headline": f"{g} fell {change * -100:.1f}% in {period} (vs {vs})",
                     "detail": f"The overall total hides this. Worth asking what changed for {g} then."})
     return out
+
+
+def _step(group, ser: dict[str, float]):
+    """Best single step change in a series: (score, group, first period after, mean before, mean after) or None.
+    Score = jump size relative to the noise on either side, so a clean +18% step beats a noisy or gradual trend."""
+    pts = [v for _, v in sorted(ser.items())]
+    keys = [k for k, _ in sorted(ser.items())]
+    if len(pts) < 6:
+        return None
+    best = None
+    for i in range(3, len(pts) - 2):  # at least 3 periods on each side
+        a, b = pts[:i], pts[i:]
+        ma, mb = statistics.fmean(a), statistics.fmean(b)
+        if not ma:
+            continue
+        noise = (statistics.pstdev(a) + statistics.pstdev(b)) / 2 or abs(ma) * 0.01
+        # a ramp has a big mean gap but also big spread on each side; a step has a gap with flat sides
+        score = abs(mb - ma) / noise
+        if abs(mb - ma) / abs(ma) >= 0.08 and score >= 3 and (best is None or score > best[0]):
+            best = (score, group, keys[i], ma, mb)
+    return best
 
 
 def _determines(a: list, b: list) -> bool:
@@ -270,7 +297,7 @@ def _charts(table, title, metric, time, segment, monthly, schema, email) -> list
 def to_markdown(a: dict) -> str:
     """The no-AI write-up: computed findings, plainly stated."""
     lines = [f"**Analysis of {a['title']}**", ""]
-    order = {"trend": 0, "segment": 1, "anomaly": 2, "relationship": 3, "overview": 4, "quality": 5}
+    order = {"trend": 0, "segment": 1, "shift": 2, "anomaly": 3, "relationship": 4, "overview": 5, "quality": 6}
     for f in sorted(a["findings"], key=lambda f: order.get(f["kind"], 9)):
         lines.append(f"- **{f['headline']}**" + (f". {f['detail']}" if f["detail"] else ""))
     lines += ["", "_These figures are calculated directly from the sheet. Ask a follow-up to dig into any of them._"]
