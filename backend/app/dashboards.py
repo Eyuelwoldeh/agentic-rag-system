@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from . import datasources
+from . import audit, datasources
 from .db import connect
 from .security import User, current_user
 from .tools import _jsonable, build_chart
@@ -79,6 +79,8 @@ def create_tile(body: NewTile, user: User = Depends(current_user)):
             (user.id, body.title, json.dumps(spec), body.source, body.sql, body.shared, pos,
              json.dumps({"columns": result["columns"], "rows": result["rows"], "truncated": result.get("truncated", False)})),
         ).fetchone()[0]
+    if body.shared:
+        audit.record("dashboard.share", user, f"tile:{tid}", {"title": body.title})
     return {"id": tid}
 
 
@@ -114,6 +116,8 @@ def update_tile(tile_id: int, body: TileUpdate, user: User = Depends(current_use
         cols = ", ".join(f"{k} = %s" for k in sets)  # keys come from the pydantic model, not the client
         with connect() as conn:
             conn.execute(f"UPDATE dashboard_tiles SET {cols} WHERE id = %s", (*sets.values(), tile_id))
+    if body.shared is not None:
+        audit.record("dashboard.share" if body.shared else "dashboard.unshare", user, f"tile:{tile_id}")
     return {"ok": True}
 
 

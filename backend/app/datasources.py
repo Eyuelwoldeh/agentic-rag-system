@@ -7,6 +7,7 @@ import time
 
 from . import connectors, tableacl
 from .db import connect
+from .groups import principals
 
 UPLOADS = "uploads"
 MAX_ROWS = 2000  # kept for charts/dashboards; the model sees a smaller preview
@@ -26,8 +27,8 @@ def available(email: str | None, admin: bool = False) -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
             "SELECT id, kind, name, account FROM connections WHERE enabled AND "
-            "(%s OR allowed IS NULL OR %s = ANY(allowed)) ORDER BY id",
-            (admin, (email or "").lower())).fetchall()
+            "(%s OR allowed IS NULL OR allowed && %s::text[]) ORDER BY id",
+            (admin, principals(email))).fetchall()
     for cid, kind, name, account in rows:
         if kind in connectors.REGISTRY and connectors.is_warehouse(kind):
             m = connectors.REGISTRY[kind]

@@ -105,7 +105,7 @@ def current_user(request: Request) -> User:
         with connect() as conn:
             row = conn.execute(
                 "SELECT u.id, u.email, u.role FROM sessions s JOIN users u ON u.id = s.user_id "
-                "WHERE s.token_hash = %s AND s.expires_at > now()", (_hash_token(token),)).fetchone()
+                "WHERE s.token_hash = %s AND s.expires_at > now() AND NOT u.disabled", (_hash_token(token),)).fetchone()
         if row:
             return User(id=row[0], email=row[1], role=row[2])
     raise HTTPException(401, "Not signed in")
@@ -122,7 +122,8 @@ def require_admin(user: User = Depends(current_user)) -> User:
 # Requiring a custom header forces a CORS preflight, which only our frontend origin passes.
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-CSRF_EXEMPT = ("/api/oauth/",)  # provider redirects are top-level GETs anyway; listed for clarity
+# provider redirects are top-level GETs anyway; SCIM authenticates with a bearer token, never a cookie
+CSRF_EXEMPT = ("/api/oauth/", "/scim/")
 
 
 async def csrf_middleware(request: Request, call_next):

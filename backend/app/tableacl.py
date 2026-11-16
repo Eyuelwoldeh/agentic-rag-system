@@ -19,6 +19,7 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from .db import DATABASE_URL, connect
+from .groups import principals
 
 _DB = conninfo_to_dict(DATABASE_URL)
 _PREFIX = "rag_" + re.sub(r"\W", "", _DB.get("dbname", "rag"))[:20] + "_u_"  # roles are cluster-wide: scope by database
@@ -38,8 +39,8 @@ def _visible_tables(conn, email: str | None) -> list[str]:
     rows = conn.execute(
         "SELECT t.name FROM data_tables t LEFT JOIN connections c ON c.id = t.connection_id "
         "JOIN information_schema.tables it ON it.table_schema = 'data' AND it.table_name = t.name "
-        "WHERE (t.allowed IS NULL OR %(e)s = ANY(t.allowed)) AND (c.allowed IS NULL OR %(e)s = ANY(c.allowed))",
-        {"e": (email or "").lower() or None}).fetchall()
+        "WHERE (t.allowed IS NULL OR t.allowed && %(p)s::text[]) AND (c.allowed IS NULL OR c.allowed && %(p)s::text[])",
+        {"p": principals(email)}).fetchall()
     return [r[0] for r in rows]
 
 

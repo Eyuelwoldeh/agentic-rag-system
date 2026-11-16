@@ -1,8 +1,9 @@
 "use client";
 
+import { KeyRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button, Field, inputCls, Status } from "@/components/ui";
-import { apiJson } from "@/lib/api";
+import { API, apiJson } from "@/lib/api";
 
 export default function Login() {
   const [setup, setSetup] = useState<boolean | null>(null);
@@ -10,11 +11,15 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sso, setSso] = useState(false);
 
   useEffect(() => {
+    const e = new URLSearchParams(location.search).get("error"); // set by the single sign-on callback
+    if (e) setError(e);
     apiJson<{ needs_setup: boolean }>("/api/auth/status")
       .then((s) => setSetup(s.needs_setup))
       .catch(() => setError("Can't reach the server. Check that the backend is running."));
+    apiJson<{ enabled: boolean }>("/api/sso/status").then((s) => setSso(s.enabled)).catch(() => {});
   }, []);
 
   async function submit(e: React.FormEvent) {
@@ -51,6 +56,12 @@ export default function Login() {
           </Field>
           {error && <div role="alert" className="flex items-start gap-2 text-sm"><Status kind="error">Error</Status><span>{error}</span></div>}
           <Button variant="primary" type="submit" loading={busy} disabled={setup === null} className="w-full">{setup ? "Create account" : "Sign in"}</Button>
+          {sso && !setup && (
+            <>
+              <div className="flex items-center gap-3 text-xs text-muted"><span className="h-px flex-1 bg-line" />or<span className="h-px flex-1 bg-line" /></div>
+              <Button type="button" icon={<KeyRound className="h-4 w-4" />} className="w-full" onClick={() => { location.href = `${API}/api/sso/start`; }}>Sign in with SSO</Button>
+            </>
+          )}
         </form>
         {!setup && <p className="mt-4 text-xs text-muted">Forgot your password? Ask an administrator to reset it.</p>}
       </div>

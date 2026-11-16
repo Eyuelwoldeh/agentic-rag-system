@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from . import analysis, llm, tools
 from .db import connect
+from .groups import principals
 from .guardrails import check_input, redact
 
 MAX_ATTEMPTS = 3  # answer, then up to 2 fact-checked rewrites
@@ -73,7 +74,7 @@ def mcp_servers_for(email: str | None) -> tuple[list[dict], list[dict]]:
 
     with connect() as conn:
         rows = conn.execute("SELECT id, config FROM connections WHERE kind = 'mcp' AND enabled "
-                            "AND (allowed IS NULL OR %s = ANY(allowed)) ORDER BY id", ((email or "").lower(),)).fetchall()
+                            "AND (allowed IS NULL OR allowed && %s::text[]) ORDER BY id", (principals(email),)).fetchall()
     servers, toolsets = [], []
     for cid, config in rows:
         server, toolset = mcp.server_def(cid, config, load_credentials(cid))

@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, History, LayoutDashboard, LibraryBig, LogOut, Menu, MessageSquareText, PanelLeftClose, PanelLeftOpen, Plug, Settings, X } from "lucide-react";
+import { BarChart3, History, ScrollText, LayoutDashboard, LibraryBig, LogOut, Menu, MessageSquareText, PanelLeftClose, PanelLeftOpen, Plug, Settings, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -18,6 +18,7 @@ const WORKSPACE: Item[] = [
 const ADMIN: Item[] = [
   { href: "/connectors", label: "Connectors", Icon: Plug },
   { href: "/usage", label: "Usage", Icon: BarChart3 },
+  { href: "/audit", label: "Audit log", Icon: ScrollText },
 ];
 
 /** App shell: fixed left navigation (Carbon / Fluent pattern) with the page to the right. */

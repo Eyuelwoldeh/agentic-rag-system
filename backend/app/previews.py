@@ -7,6 +7,7 @@ from psycopg import sql
 
 from . import datasources, tableacl
 from .db import connect
+from .groups import principals
 from .security import User, current_user
 from .tools import _jsonable
 
@@ -39,8 +40,8 @@ def _visible_document(doc_id: int, user: User):
         row = conn.execute(
             "SELECT d.id, d.name, d.source, d.url, d.content, d.external_id, d.updated_at, d.created_at, d.replaced_at, d.change_note FROM documents d "
             "LEFT JOIN connections c ON c.id = d.connection_id WHERE d.id = %(id)s "
-            "AND (d.allowed IS NULL OR %(e)s = ANY(d.allowed)) AND (c.allowed IS NULL OR %(e)s = ANY(c.allowed))",
-            {"id": doc_id, "e": user.email}).fetchone()
+            "AND (d.allowed IS NULL OR d.allowed && %(p)s::text[]) AND (c.allowed IS NULL OR c.allowed && %(p)s::text[])",
+            {"id": doc_id, "p": principals(user.email)}).fetchone()
     if not row:
         raise HTTPException(404, "Document not found")  # same answer whether it doesn't exist or you can't see it
     return row

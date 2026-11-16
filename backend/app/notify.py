@@ -22,8 +22,11 @@ def users_who_can_see(allowed: list[str] | None) -> list[int]:
     """User ids allowed by an access list (None = everyone). Used to notify only people who may see something."""
     with connect() as conn:
         if allowed is None:
-            return [r[0] for r in conn.execute("SELECT id FROM users").fetchall()]
-        return [r[0] for r in conn.execute("SELECT id FROM users WHERE email = ANY(%s)", ([a.lower() for a in allowed],)).fetchall()]
+            return [r[0] for r in conn.execute("SELECT id FROM users WHERE NOT disabled").fetchall()]
+        acl = [a.lower() for a in allowed]  # emails and group:<name> entries
+        return [r[0] for r in conn.execute(
+            "SELECT id FROM users u WHERE NOT disabled AND (u.email = ANY(%(a)s) OR EXISTS (SELECT 1 FROM group_members m "
+            "JOIN groups g ON g.id = m.group_id WHERE m.user_id = u.id AND 'group:' || lower(g.name) = ANY(%(a)s)))", {"a": acl}).fetchall()]
 
 
 @router.get("/api/notifications")
