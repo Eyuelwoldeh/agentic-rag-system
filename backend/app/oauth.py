@@ -118,9 +118,11 @@ def _exchange(provider: str, form: dict) -> dict:
         raise RuntimeError(f"{m.LABEL} OAuth app was removed in Settings")
     spec = m.OAUTH
     headers = {"Accept": "application/json"}
+    basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     if spec.get("token_auth") == "basic_json":  # Notion: HTTP Basic + JSON body
-        basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
         resp = http_request("POST", spec["token_url"], json=form, headers={**headers, "Authorization": f"Basic {basic}"})
+    elif spec.get("token_auth") == "basic":  # QuickBooks, Xero: HTTP Basic + form body
+        resp = http_request("POST", spec["token_url"], data=form, headers={**headers, "Authorization": f"Basic {basic}"})
     else:
         resp = http_request("POST", spec["token_url"], data={**form, "client_id": client_id, "client_secret": client_secret},
                             headers=headers)
@@ -130,8 +132,11 @@ def _exchange(provider: str, form: dict) -> dict:
     creds = {"access_token": data["access_token"]}
     if data.get("refresh_token"):
         creds["refresh_token"] = data["refresh_token"]
-    if data.get("expires_in"):
-        creds["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=int(data["expires_in"]))).isoformat()
+    for k in spec.get("keep", []):  # e.g. Salesforce's instance_url
+        if data.get(k):
+            creds[k] = data[k]
+    if expires_in := data.get("expires_in") or spec.get("expires_in"):  # Salesforce omits it: assume the session timeout
+        creds["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))).isoformat()
     return creds
 
 
@@ -156,6 +161,9 @@ def callback(provider: str, request: Request, state: str = "", code: str = "", e
     try:
         creds = _exchange(provider, {"grant_type": "authorization_code", "code": code,
                                      "redirect_uri": redirect_uri(provider), "code_verifier": row[2]})
+        for param, key in _oauth_module(provider).OAUTH.get("callback_params", {}).items():  # QuickBooks sends realmId here
+            if request.query_params.get(param):
+                creds[key] = request.query_params[param]
         conn_id = connectors.create(provider, row[3], row[4], creds=creds, user_id=user.id, allowed=row[5])
     except Exception as e:
         return back(error=str(e)[:300])
@@ -175,7 +183,7 @@ def load_credentials(conn_id: int) -> dict | None:
     if "refresh_token" not in creds:
         raise RuntimeError("Access expired and no refresh token was issued. Reconnect this source.")
     fresh = _exchange(kind, {"grant_type": "refresh_token", "refresh_token": creds["refresh_token"]})
-    fresh.setdefault("refresh_token", creds["refresh_token"])  # Google doesn't resend it
+    fresh = {**creds, **fresh}  # keeps refresh_token (Google doesn't resend it), realm_id, instance_url...
     with connect() as conn:
         conn.execute("UPDATE connections SET credentials = %s WHERE id = %s", (encrypt(fresh), conn_id))
     return fresh

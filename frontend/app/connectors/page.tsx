@@ -1,6 +1,6 @@
 "use client";
 
-import { Database, FileText, Globe, MoreHorizontal, Plug, Plus, RefreshCw } from "lucide-react";
+import { BarChart3, Database, FileText, Globe, MoreHorizontal, Plug, Plus, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import SortableTable, { type Column } from "@/components/SortableTable";
@@ -11,7 +11,7 @@ import { ago } from "@/lib/time";
 type FieldDef = { key: string; label: string; help: string; required?: boolean };
 type Paste = { label: string; placeholder: string; help: string; multiline?: boolean; optional?: boolean };
 type Available = {
-  kind: string; label: string; config: FieldDef[]; doc: string; blurb: string; category: "index" | "warehouse" | "tool";
+  kind: string; label: string; config: FieldDef[]; doc: string; blurb: string; category: "index" | "business" | "warehouse" | "tool";
   guide: string[]; oauth: boolean; oauth_ready: boolean; paste: Paste | null;
 };
 type Connection = {
@@ -20,8 +20,11 @@ type Connection = {
 };
 type Catalog = { available: Available[]; connections: Connection[]; interval_minutes: number };
 
+const synced = (c?: Available["category"]) => c === "index" || c === "business"; // copied in on each sync, not queried live
+
 const GROUPS: { category: Available["category"]; title: string; blurb: string; Icon: typeof Plug }[] = [
   { category: "index", title: "Knowledge sources", blurb: "Copied into search and kept in sync.", Icon: FileText },
+  { category: "business", title: "Business systems", blurb: "Sales, finance and customer data, synced as tables you can analyze.", Icon: BarChart3 },
   { category: "warehouse", title: "Databases", blurb: "Queried live and read-only, for figures and charts. Nothing is copied.", Icon: Database },
   { category: "tool", title: "Apps", blurb: "Tools with an MCP server, used live by the assistant.", Icon: Globe },
 ];
@@ -104,12 +107,12 @@ function ConnectionsTable({ rows, byKind, onChange, empty }: { rows: Connection[
       </span>
     ) },
     { key: "type", label: "Type", sort: (c) => c.kind, render: (c) => <span className="text-text2">{byKind[c.kind]?.label ?? c.kind}</span> },
-    { key: "status", label: "Status", render: (c) => statusOf(c, byKind[c.kind]?.category !== "index") },
+    { key: "status", label: "Status", render: (c) => statusOf(c, !synced(byKind[c.kind]?.category)) },
     { key: "access", label: "Access", render: (c) => c.allowed ? <Status kind="restricted">{c.allowed.length} {c.allowed.length === 1 ? "person" : "people"}</Status> : <span className="text-text2">Everyone</span> },
-    { key: "docs", label: "Documents", num: true, sort: (c) => c.documents, render: (c) => byKind[c.kind]?.category === "index" ? c.documents.toLocaleString() : <span className="text-muted">Live</span> },
+    { key: "docs", label: "Documents", num: true, sort: (c) => c.documents, render: (c) => synced(byKind[c.kind]?.category) ? c.documents.toLocaleString() : <span className="text-muted">Live</span> },
     { key: "last", label: "Last checked", sort: (c) => c.last_synced_at ?? "", render: (c) => <span className="text-text2">{c.last_synced_at ? ago(c.last_synced_at) : "Never"}</span> },
     { key: "actions", label: "", className: "w-1", render: (c) => {
-      const live = byKind[c.kind]?.category !== "index";
+      const live = !synced(byKind[c.kind]?.category);
       const syncing = c.running || c.status === "syncing";
       return (
         <span className="flex justify-end gap-1">

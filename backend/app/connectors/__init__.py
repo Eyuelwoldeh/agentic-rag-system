@@ -1,6 +1,6 @@
 """Connector registry + sync engine.
 
-Each connector module exposes LABEL, CONFIG, OAUTH (provider spec or None), PASTE (manual-credential spec or None),
+Each connector module exposes LABEL, BLURB, CATEGORY (index | business | warehouse | tool; default index), CONFIG, OAUTH (provider spec or None), PASTE (manual-credential spec or None),
 whoami(creds) -> account label, and fetch(config, since, creds) -> Iterator[Doc].
 """
 import json
@@ -12,9 +12,13 @@ from datetime import datetime, timedelta, timezone
 from ..db import connect
 from ..ingest import upsert_document
 from ..security import encrypt
-from . import bigquery, gdrive, github, mcp, notion, postgres, slack, snowflake, web
+from . import (bigquery, confluence, gdrive, github, hubspot, jira, mcp, microsoft365, notion, postgres, quickbooks, salesforce,
+               shopify, slack, snowflake, square, stripe, web, xero)
 
-REGISTRY = {"slack": slack, "gdrive": gdrive, "notion": notion, "github": github, "web": web,
+REGISTRY = {"slack": slack, "gdrive": gdrive, "microsoft365": microsoft365, "notion": notion, "confluence": confluence,
+            "jira": jira, "github": github, "web": web,
+            "quickbooks": quickbooks, "xero": xero, "stripe": stripe, "shopify": shopify, "square": square,
+            "hubspot": hubspot, "salesforce": salesforce,
             "bigquery": bigquery, "snowflake": snowflake, "postgres": postgres, "mcp": mcp}
 
 
@@ -29,7 +33,7 @@ _lock = threading.Lock()
 
 
 def is_live(kind: str) -> bool:
-    """Warehouses and MCP servers are used at question time; nothing is copied into the index."""
+    """Warehouses and MCP servers are used at question time; nothing is copied. Business systems are synced as tables."""
     return getattr(REGISTRY[kind], "CATEGORY", "index") in ("warehouse", "tool")
 
 
@@ -79,7 +83,7 @@ def sync(conn_id: int, full: bool = False) -> None:
         kind, config, last = row
         module = REGISTRY[kind]
         if kind == "mcp":
-            account = module.verify(config, creds)
+            account = module.verify(config, load_credentials(conn_id))
             with connect() as conn:
                 conn.execute("UPDATE connections SET status = 'live', account = coalesce(nullif(%s, ''), account), "
                              "last_synced_at = now() WHERE id = %s", (account, conn_id))

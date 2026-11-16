@@ -68,6 +68,16 @@ There are two ways to connect, both from the UI, with no `.env` editing:
 | Notion | Pages shared with the integration | Internal integration secret |
 | GitHub | Markdown docs, plus issues and PRs with comments | Fine-grained PAT (read-only Contents + Issues) |
 | Website | Same-site pages under a start URL | Nothing needed |
+| Microsoft 365 | OneDrive / SharePoint Word, PowerPoint, PDF, text; Excel → tables; per-file sharing | OAuth only (delegated Files.Read.All, Sites.Read.All) |
+| Confluence | Pages in chosen spaces, with links | Atlassian API token (+ account email) |
+| Jira | One doc per issue: description, status, assignee, comments | Atlassian API token (+ account email) |
+| QuickBooks Online | Tables: monthly P&L (24 months), invoices, expenses | OAuth only (Accounting scope) |
+| Xero | Tables: invoices, monthly P&L (12 months) | OAuth only (read-only granular scopes) |
+| Stripe | Tables: charges, invoices, subscriptions (amounts in major units) | Restricted read-only key |
+| Shopify | Tables: orders, order lines, products/variants | Custom-app Admin API token (read_orders, read_products) |
+| Square | Tables: locations, payments by location (last 2 years) | Access token |
+| HubSpot | Tables: deals, companies, contacts (name/email/company only) | Private app token (CRM read scopes) |
+| Salesforce | Tables: opportunities, accounts (SOQL) | OAuth only |
 | BigQuery | Live queries (not copied) | Service-account JSON (Data Viewer + Job User) |
 | Snowflake | Live queries (not copied) | Programmatic access token for a read-only role |
 | PostgreSQL | Live queries (not copied) | Connection URL of a read-only user |
@@ -75,7 +85,9 @@ There are two ways to connect, both from the UI, with no `.env` editing:
 
 Notes: Slack requires an **https** redirect URL, so for local OAuth use a tunnel (e.g. ngrok) and set `PUBLIC_URL` to it; pasting a bot token works locally. GitHub OAuth apps have no read-only scope for private repos (`repo`); a pasted fine-grained token can be strictly read-only.
 
-Adding a connector = one module in `backend/app/connectors/` exposing `LABEL`, `CONFIG`, `OAUTH`, `PASTE`, `whoami(creds)` and `fetch(config, since, creds)`, plus one line in `REGISTRY`.
+Business systems (QuickBooks to Salesforce) are re-exported in full on each sync and replace their tables, capped at 200k rows per table.
+
+Adding a connector = one module in `backend/app/connectors/` exposing `LABEL`, `CATEGORY`, `CONFIG`, `OAUTH`, `PASTE`, `whoami(creds)` and `fetch(config, since, creds)`, plus one line in `REGISTRY`.
 
 **Permissions.** Every document and connection can carry an access list (emails). Search, SQL, dashboards and MCP tools all apply it, so a document is visible only when both its own list and its connection's list allow the viewer. Lists come from:
 - **the connection**: "Who can see results from this source?" when connecting; editable any time and effective immediately;
